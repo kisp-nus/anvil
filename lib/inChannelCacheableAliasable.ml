@@ -90,7 +90,7 @@ let input_line t =
 
 (* Seeks to a specific position in the channel. *)
 let seek t pos =
-  if pos < 0L || pos > t.len then invalid_arg "InChannelCachableAliasable.seek";
+  if pos < 0L || pos > t.len then invalid_arg "InChannelCacheableAliasable.seek";
   t.pos <- pos
 
 (* Returns the current position in the channel. *)

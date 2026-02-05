@@ -27,7 +27,7 @@ let rec parse_recursive cunits parsed_files (config : Config.compile_config) fil
         | _ -> filename
       in
       try
-        InChannelCachableAliasable.with_open_aliased
+        InChannelCacheableAliasable.with_open_aliased
           source_filename
           filename
           (fun in_data ->
