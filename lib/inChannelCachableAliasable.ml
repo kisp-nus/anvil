@@ -45,11 +45,12 @@ let with_open filename f =
 let with_open_aliased source_filename aliased_filename f =
   let _ = if source_filename <> aliased_filename then
     let _ = with_open source_filename (fun _ -> ()) in
-    if Hashtbl.mem file_data_cache source_filename then
+    if Hashtbl.mem file_data_cache source_filename then (
       if aliased_filename = "-" then ()
-    else
-      let contents = Hashtbl.find file_data_cache source_filename in
-      Hashtbl.replace file_data_cache aliased_filename contents
+      else
+        let contents = Hashtbl.find file_data_cache source_filename in
+        Hashtbl.replace file_data_cache aliased_filename contents
+    )
   else () in
   with_open aliased_filename f
 
@@ -64,6 +65,7 @@ let input t dst dst_pos len =
   to_read
 
 (* Reads a line from the in-memory channel, returning it as a string option.
+   Newline characters are not included in the returned string.
    Returns [None] if the end of the channel is reached. *)
 let input_line t =
   if t.pos >= t.len then None
@@ -88,7 +90,7 @@ let input_line t =
 
 (* Seeks to a specific position in the channel. *)
 let seek t pos =
-  if pos < 0L || pos > t.len then invalid_arg "InMemoryChannel.seek";
+  if pos < 0L || pos > t.len then invalid_arg "InChannelCachableAliasable.seek";
   t.pos <- pos
 
 (* Returns the current position in the channel. *)

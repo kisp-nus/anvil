@@ -29,7 +29,7 @@ let parse_args () : compile_config =
       ("-json", Arg.Set json_output, "Output compilation results in JSON format")
     ]
     add_input_filename
-    "anvil [-verbose] [-disable-lt-checks] [-O <opt-level>] [-two-round] [-json] <file1> [<file2>] ...";
+    "anvil [-stdin] [-verbose] [-disable-lt-checks] [-O <opt-level>] [-two-round] [-json] <file1> [<file2>] ...";
   {
     verbose = !verbose;
     stdin = !stdin;
