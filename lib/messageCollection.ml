@@ -58,9 +58,15 @@ let create (channels : channel_def ast_node list)
 
   let rec create_endpoint_array_string numo base_string_list = 
     match numo with
-    | Lang.OneDimmension n -> List.init n (fun i -> List.map (fun base_string -> base_string ^ "[" ^ (string_of_int i) ^ "]") base_string_list) |> List.flatten
+    | Lang.OneDimmension n -> 
+        List.concat_map (fun base_string -> 
+          List.init n (fun i -> base_string ^ "[" ^ (string_of_int i) ^ "]")
+        ) base_string_list
     | Lang.MultiDimmension (n, rest) ->
-      List.init n (fun i -> List.map (fun base_string -> base_string ^ "[" ^ (string_of_int i) ^ "]") base_string_list) |> List.flatten |> create_endpoint_array_string rest
+        let expanded = List.concat_map (fun base_string -> 
+          List.init n (fun i -> base_string ^ "[" ^ (string_of_int i) ^ "]")
+        ) base_string_list in
+        create_endpoint_array_string rest expanded
   in
   let codegen_chan = fun span (chan : channel_def) ->
     (* let (left_foreign, right_foreign) =
@@ -89,10 +95,10 @@ let create (channels : channel_def ast_node list)
       let endpoints = List.map2 (fun lft_nm  rght_nm ->
         let left_endpoint = { name = lft_nm; channel_class = chan.channel_class;
                             channel_params = chan.channel_params;
-                            dir = Left; foreign = get_foreign chan.endpoint_left; opp = Some chan.endpoint_right; num_instances = Some n' } in
+                            dir = Left; foreign = get_foreign chan.endpoint_left; opp = Some rght_nm; num_instances = Some n' } in
         let right_endpoint = { name = rght_nm; channel_class = chan.channel_class;
                             channel_params  = chan.channel_params;  
-                            dir = Right; foreign = get_foreign chan.endpoint_right; opp = Some chan.endpoint_left; num_instances = Some n' } in
+                            dir = Right; foreign = get_foreign chan.endpoint_right; opp = Some lft_nm; num_instances = Some n' } in
         [(left_endpoint, span); (right_endpoint, span)]
         ) left_nm_list right_nm_list |> List.concat in 
       endpoints

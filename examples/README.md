@@ -99,8 +99,9 @@ Below is a categorized list of the available examples, along with brief descript
 | [multi_send_recv](multi_send_recv.anvil) | Multiple sends/receives from the same endpoint  |
 | [test_chan_array](test_chan_array.anvil) | Channel arrays and indexed access               |
 | [test_channel_param_array](test_channel_param_array.anvil) | Test channel array range with data parameters          |
+| [test_chan_multi_dimmension](test_chan_array_multidim.anvil)| Multi-dimensional channel arrays with concrete size instantiation |
 
-> **Total:** 10 examples
+> **Total:** 11 examples
 
 ---
 
@@ -163,4 +164,4 @@ Keeping this README up to date helps maintain clarity and usability for future u
 
 ---
 
-> **Current Example Count:** 46
+> **Current Example Count:** 47

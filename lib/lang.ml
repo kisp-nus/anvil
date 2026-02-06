@@ -116,6 +116,14 @@ type array_dimm_concrete =
   | OneDimmension of int
   | MultiDimmension of int * array_dimm_concrete
 
+type array_index_concrete =
+  | IndexSingle of int
+  | IndexRange of (int *int)
+  | IndexMultiDimRange of (int * int * array_index_concrete)
+  | IndexMultiDimSingle of (int*array_index_concrete)
+  
+
+
 type array_dimensions =
   | OneDim of (int maybe_param)
   | MultiDim of (int maybe_param)*(array_dimensions)
@@ -457,7 +465,7 @@ type spawn_def = {
 }
 and args_spawn = 
   | SingleEp of identifier
-  | RangeEp of identifier *int * int  (** name, start, size*)
+  | IndexedEp of identifier * array_index_concrete
 
 (* TODO: specify the type? *)
 type shared_var_def = {
@@ -820,13 +828,51 @@ in get_lv lv
 
 
 let preprocess_ep_spawn_args (args : args_spawn list) : identifier list =
+  let rec generate_ep_indices base_string_list idx =
+    match idx with
+    | IndexSingle i ->
+      List.map(
+        fun base_str -> base_str ^ (Printf.sprintf "[%d]" i)
+      )base_string_list
+    | IndexRange (start, sz) ->
+        let end_v = start + sz - 1 in
+        let rec generate_range curr =
+          if curr > end_v then
+            []
+          else  
+            let new_base_strings = List.map(
+              fun base_str -> base_str ^ (Printf.sprintf "[%d]" curr)
+            ) base_string_list in
+            new_base_strings @ (generate_range (curr + 1))
+        in
+        generate_range start
+    | IndexMultiDimSingle (i, rest) ->
+        let new_base_strings = List.map(
+          fun base_str -> base_str ^ (Printf.sprintf "[%d]" i)
+        ) base_string_list in
+        generate_ep_indices new_base_strings rest
+    | IndexMultiDimRange (start, size, rest) ->
+        List.concat_map (fun curr ->
+          let new_base_strings = List.map(
+            fun base_str -> base_str ^ (Printf.sprintf "[%d]" curr)
+          ) base_string_list in
+          generate_ep_indices new_base_strings rest
+        ) (List.init size (fun i -> start + i))
+  in
+
   List.concat_map
     (function
       | SingleEp name -> [name]
-      | RangeEp (name, start, size) ->
-        (
-          [List.init size (fun i -> Printf.sprintf "%s[%d]" name (start + i))] |> List.concat
-
-        )
+      | IndexedEp (name, idx) ->
+        generate_ep_indices [name] idx
     ) 
     args
+
+let rec calculate_array_index_concrete_size (dimm : array_index_concrete) : int =
+  match dimm with
+  | IndexSingle _ -> 1
+  | IndexRange (_, sz) -> sz
+  | IndexMultiDimSingle (_, rest) ->
+      calculate_array_index_concrete_size rest
+  | IndexMultiDimRange (_, size, rest) ->
+      size * (calculate_array_index_concrete_size rest)

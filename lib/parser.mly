@@ -422,10 +422,18 @@ spawn:
 args_spawn:
 | ident = IDENT
   { Lang.SingleEp ident }
-| ident = IDENT; LEFT_BRACKET; start = INT; PLUS; COLON; size = INT; RIGHT_BRACKET
-  { Lang.RangeEp (ident, start, size) }
-| ident = IDENT; LEFT_BRACKET; index = INT; RIGHT_BRACKET;
-  { Lang.SingleEp (Printf.sprintf "%s[%d]" ident index)  }
+| ident = IDENT; idx = array_index_concrete
+  { Lang.IndexedEp (ident, idx) }
+
+array_index_concrete:
+| LEFT_BRACKET; n = INT; RIGHT_BRACKET
+  { Lang.IndexSingle n }
+| LEFT_BRACKET; start = INT; PLUS; COLON; size = INT; RIGHT_BRACKET
+  { Lang.IndexRange (start, size) }
+| LEFT_BRACKET; start = INT; PLUS; COLON; size = INT;RIGHT_BRACKET; rest = array_index_concrete
+  { Lang.IndexMultiDimRange (start, size, rest) }
+| LEFT_BRACKET; n = INT; RIGHT_BRACKET;rest = array_index_concrete
+  { Lang.IndexMultiDimSingle (n, rest) }
 
 param_value:
 | n = INT
@@ -880,21 +888,21 @@ message_specifier:
       msg = msg_type;
     } : Lang.message_specifier
   }
-| endpoint = IDENT; LEFT_BRACKET; index = INT; RIGHT_BRACKET; PERIOD; msg_type = IDENT
+| endpoint = IDENT;indx_str=get_array_index_string;PERIOD; msg_type = IDENT
   {
     {
-      endpoint = Printf.sprintf "%s[%d]" endpoint index;
-      msg = msg_type;
-    } : Lang.message_specifier
-  }
-| endpoint = IDENT; LEFT_BRACKET; index = IDENT; RIGHT_BRACKET; PERIOD; msg_type = IDENT
-  {
-    {
-      endpoint = Printf.sprintf "%s[%s]" endpoint index;
+      endpoint = Printf.sprintf "%s%s" endpoint indx_str;
       msg = msg_type;
     } : Lang.message_specifier
   }
 ;
+
+
+get_array_index_string:
+| LEFT_BRACKET; idx_content = INT; RIGHT_BRACKET
+  { Printf.sprintf "[%d]" idx_content }
+| LEFT_BRACKET; idx_content = INT; RIGHT_BRACKET; rest = get_array_index_string
+  { Printf.sprintf "[%d]%s" idx_content rest }
 
 shared_var_def:
   KEYWORD_SHARED; LEFT_PAREN; lifetime = lifetime_spec; RIGHT_PAREN; ident = IDENT; KEYWORD_ASSIGNED; KEYWORD_BY; thread_id = INT
