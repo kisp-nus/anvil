@@ -98,7 +98,7 @@ Below is a categorized list of the available examples, along with brief descript
 | [test_void](test_void.anvil)             | `void` messages for pure synchronization        |
 | [multi_send_recv](multi_send_recv.anvil) | Multiple sends/receives from the same endpoint  |
 | [test_chan_array](test_chan_array.anvil) | Channel arrays and indexed access               |
-| [test_channel_param_array](test_channel_param_array.anvil) | Test channel array range with parameters          |
+| [test_channel_param_array](test_channel_param_array.anvil) | Test channel array range with data parameters          |
 
 > **Total:** 10 examples
 

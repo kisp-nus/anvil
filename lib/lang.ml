@@ -112,6 +112,15 @@ and param_value =
 (** Endpoint definition. A pair is
 created once a channel class
 is instantiated. *)
+type array_dimm_concrete =
+  | OneDimmension of int
+  | MultiDimmension of int * array_dimm_concrete
+
+type array_dimensions =
+  | OneDim of (int maybe_param)
+  | MultiDim of (int maybe_param)*(array_dimensions)
+
+
 type endpoint_def = {
   name: identifier;
   channel_class: identifier;
@@ -122,8 +131,10 @@ type endpoint_def = {
   used within this process? *)
   opp: identifier option; (** if the endpoint is created locally, the other endpoint associated
   with the same channel *)
-  num_instances : int option (** number of instances for arrayed channels *)
+  num_instances : array_dimensions option (** number of instances for arrayed channels *)
 }
+
+(** A macro definition. *)
 
 type macro_def = {
   id: identifier;
@@ -241,7 +252,7 @@ type channel_def = {
   endpoint_left: identifier;
   endpoint_right: identifier;
   visibility: channel_visibility;
-  n_instances : int option; (** number of instances for arrayed channels To Do: add support for parametrization *) 
+  n_instances : array_dimensions option; (** number of instances for arrayed channels To Do: add support for parametrization *) 
 }
 
 (* expressions *)

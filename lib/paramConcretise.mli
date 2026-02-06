@@ -7,3 +7,5 @@ val concretise_dtype : Lang.param list -> Lang.param_value list -> Lang.data_typ
 
 (** Concretise message. *)
 val concretise_message : Lang.param list -> Lang.param_value list -> Lang.message_def -> Lang.message_def
+
+val concretise_array_dimm : Lang.param list -> Lang.param_value list -> Lang.array_dimensions -> Lang.array_dimm_concrete

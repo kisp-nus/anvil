@@ -316,7 +316,7 @@ proc_def_arg:
       num_instances = None;
     } : Lang.endpoint_def
   }
-| foreign = foreign_tag; ident = IDENT; LEFT_BRACKET; n = INT; RIGHT_BRACKET; COLON; chan_dir = channel_direction; chan_class = channel_class_concrete
+| foreign = foreign_tag; ident = IDENT; n = array_dimm; COLON; chan_dir = channel_direction; chan_class = channel_class_concrete
   {
     {
       name = ident;
@@ -331,6 +331,14 @@ proc_def_arg:
   }
 ;
 
+array_dimm:
+| LEFT_BRACKET; n = int_maybe_param; RIGHT_BRACKET
+  { Lang.OneDim n }
+| LEFT_BRACKET; n = int_maybe_param; RIGHT_BRACKET; rst = array_dimm;
+  {Lang.MultiDim (n, rst) }
+
+
+   
 // To Ask: What does this do
 foreign_tag:
 | { false }
@@ -365,7 +373,7 @@ channel_def:
   }
 | left_foreign = foreign_tag; left_endpoint = IDENT; DOUBLE_MINUS;
   right_foreign = foreign_tag; right_endpoint = IDENT; COLON;
-  chan_class = channel_class_concrete LEFT_BRACKET; n = INT; RIGHT_BRACKET
+  chan_class = channel_class_concrete; n = array_dimm
   {
     let visibility = match left_foreign, right_foreign with
       | true, true -> Lang.BothForeign
