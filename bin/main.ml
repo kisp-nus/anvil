@@ -26,7 +26,7 @@ let compile_with_json_output config =
       );
       Sys.remove temp_file
     with
-    | Anvil.CompileDriver.CompileError msg ->
+    | Anvil.CompileHelpers.CompileError msg ->
       (try Sys.remove temp_file with _ -> ());
       let json_errors = Anvil.JsonOutput.error_message_to_json_errors "error" msg in
       let json_result = Anvil.JsonOutput.failure_output json_errors in
@@ -48,7 +48,7 @@ let compile_with_normal_output config =
       if Option.is_some config.output_filename then
         close_out out_channel
     with
-    | Anvil.CompileDriver.CompileError msg ->
+    |  Anvil.CompileHelpers.CompileError msg ->
       if Option.is_some config.output_filename then
         close_out_noerr out_channel;
       let open Anvil.Lang in
