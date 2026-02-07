@@ -2,7 +2,10 @@ open CompileHelpers
   
 let compile out config =
   let open Config in
-  let toplevel_filename = List.hd config.input_filenames in
+  let toplevel_filename = if config.stdin && List.length config.input_filenames = 0
+    then "-"
+    else List.hd config.input_filenames
+  in
   let cunits = ref [] in
   (
     try parse_recursive cunits (ref Utils.StringSet.empty) config toplevel_filename
