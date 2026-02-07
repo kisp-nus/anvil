@@ -101,8 +101,9 @@ Below is a categorized list of the available examples, along with brief descript
 | [test_channel_param_array](test_channel_param_array.anvil) | Test channel array range with data parameters          |
 | [test_chan_multi_dimmension](test_chan_array_multidim.anvil)| Multi-dimensional channel arrays with concrete size instantiation |
 | [test_chan_array_parametric](test_chan_array_parametric.anvil)| Multi-dimensional channel arrays with parametric size instantiation |
+| [test_chan_generate](test_chan_generate.anvil) | Indexed endpoint access in `generate` blocks        |
 
-> **Total:** 12 examples
+> **Total:** 13 examples
 
 ---
 
@@ -165,4 +166,4 @@ Keeping this README up to date helps maintain clarity and usability for future u
 
 ---
 
-> **Current Example Count:** 48
+> **Current Example Count:** 49

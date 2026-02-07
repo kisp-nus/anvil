@@ -899,11 +899,16 @@ message_specifier:
 
 
 get_array_index_string:
-| LEFT_BRACKET; idx_content = INT; RIGHT_BRACKET
-  { Printf.sprintf "[%d]" idx_content }
-| LEFT_BRACKET; idx_content = INT; RIGHT_BRACKET; rest = get_array_index_string
-  { Printf.sprintf "[%d]%s" idx_content rest }
+| LEFT_BRACKET; idx_content = int_or_id; RIGHT_BRACKET
+  { Printf.sprintf "[%s]" idx_content }
+| LEFT_BRACKET; idx_content = int_or_id; RIGHT_BRACKET; rest = get_array_index_string
+  { Printf.sprintf "[%s]%s" idx_content rest }
 
+int_or_id: 
+| n = INT
+  { string_of_int n }
+| id = IDENT
+  { id }
 shared_var_def:
   KEYWORD_SHARED; LEFT_PAREN; lifetime = lifetime_spec; RIGHT_PAREN; ident = IDENT; KEYWORD_ASSIGNED; KEYWORD_BY; thread_id = INT
   {

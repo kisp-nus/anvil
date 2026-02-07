@@ -634,15 +634,30 @@ and string_of_literal (lit : literal) : string =
   | WithLength (n, v) -> "WithLength (" ^ string_of_int n ^ ", " ^ string_of_int v ^ ")"
   | NoLength v -> "NoLength " ^ string_of_int v
 
-let sub_ep_index (ep: message_specifier) (index: int) : message_specifier =
+let sub_ep_index (ep: message_specifier) (index: int) (id : identifier) : message_specifier =
   let is_array = String.contains ep.endpoint '[' && String.contains ep.endpoint ']'in
+  let sub_all_indices ep   =
+      let rec aux s acc =
+        match String.index_opt s '[' with
+        | Some start_idx ->
+            (match String.index_opt s ']' with
+            | Some end_idx when end_idx > start_idx ->
+                let before = String.sub s 0 start_idx in
+                let after = String.sub s (end_idx + 1) (String.length s - end_idx - 1) in
+                let index_str = String.sub s (start_idx + 1) (end_idx - start_idx - 1) in
+                if index_str = id then
+                  aux after (before ^ "[" ^ string_of_int index ^ "]" ^ acc)
+                else
+                  aux after (before ^ "[" ^ index_str ^ "]" ^ acc)
+            | _ -> acc ^ s)
+        | None -> acc ^ s
+      in
+      aux ep.endpoint ""
+  in
+
+        
   if is_array then
-    let base_name =
-      match String.index_opt ep.endpoint '[' with
-      | Some idx -> String.sub ep.endpoint 0 idx
-      | None -> ep.endpoint
-    in
-    { endpoint = Printf.sprintf "%s[%d]" base_name index; msg = ep.msg }
+    { endpoint = sub_all_indices ep; msg = ep.msg }
   else
     ep
 
@@ -692,7 +707,7 @@ let rec substitute_expr_identifier (id: identifier) (value: expr_node) (idx : in
       Assign (new_lv, subst e)
   | Send {send_msg_spec; send_data} ->
       Send {
-        send_msg_spec = sub_ep_index send_msg_spec idx;
+        send_msg_spec = sub_ep_index send_msg_spec idx id;
         send_data = subst send_data
       }
   | Debug (DebugPrint (msg, exprs)) ->
@@ -717,13 +732,13 @@ let rec substitute_expr_identifier (id: identifier) (value: expr_node) (idx : in
   | TryRecv (ident, recv_pack, e1, e2) ->
     TryRecv (
       ident,
-      {recv_msg_spec = sub_ep_index recv_pack.recv_msg_spec idx},
+      {recv_msg_spec = sub_ep_index recv_pack.recv_msg_spec idx id},
       subst e1,
       subst e2
     )
   | TrySend (send_pack, e1, e2) ->
     TrySend (
-      {send_msg_spec = sub_ep_index send_pack.send_msg_spec idx; send_data = subst send_pack.send_data},
+      {send_msg_spec = sub_ep_index send_pack.send_msg_spec idx id; send_data = subst send_pack.send_data},
       subst e1,
       subst e2
     )
@@ -742,7 +757,7 @@ let rec substitute_expr_identifier (id: identifier) (value: expr_node) (idx : in
   | Recurse | Literal _ | Cycle _
   | Identifier _ | Ready _ | Probe _-> expr.d
   | Recv recv_pack ->
-      let new_recv_pack = {recv_msg_spec = sub_ep_index recv_pack.recv_msg_spec idx} in
+      let new_recv_pack = {recv_msg_spec = sub_ep_index recv_pack.recv_msg_spec idx id} in
       Recv new_recv_pack
   | Sync _ -> expr.d
 
