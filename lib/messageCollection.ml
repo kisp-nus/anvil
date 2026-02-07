@@ -43,7 +43,8 @@ let create (channels : channel_def ast_node list)
            (args : endpoint_def ast_node list)
            (spawns : spawn_def ast_node list)
            (channel_classes : channel_class_def list)
-           (proc_params : param list) =
+           (proc_params : param list) 
+           (param_values : param_value list) =
   let endpoint_in_spawns =
     List.map data_of_ast_node spawns
     |> List.concat_map (fun (spawn : spawn_def) -> (Lang.preprocess_ep_spawn_args spawn.params))
@@ -87,7 +88,7 @@ let create (channels : channel_def ast_node list)
       [(left_endpoint, span); (right_endpoint, span)]
     else 
       let n' = Option.get chan.n_instances in
-      let n = ParamConcretise.concretise_array_dimm proc_params chan.channel_params n' in
+      let n = ParamConcretise.concretise_array_dimm proc_params param_values n' in
       let left_nm_list = create_endpoint_array_string n [chan.endpoint_left] in
       let right_nm_list = create_endpoint_array_string n [chan.endpoint_right] in
       assert (List.length left_nm_list = List.length right_nm_list);
@@ -129,7 +130,7 @@ let create (channels : channel_def ast_node list)
         [({ep with foreign = get_foreign ep.name}, span)]
     | Some num ->
         (* let num_instances = in *)
-        let num_instances = ParamConcretise.concretise_array_dimm proc_params ep.channel_params num in
+        let num_instances = ParamConcretise.concretise_array_dimm proc_params param_values num in
         let size_instances = get_size_instances num_instances in
         if size_instances <= 0 then
           raise (Except.TypeError [

@@ -1189,7 +1189,7 @@ let build_proc (config : Config.compile_config) sched module_name param_values
   match proc.body with
   | Native body ->
     let msg_collection = MessageCollection.create body.channels
-                                      proc.args body.spawns ci.channel_classes proc.params in
+                                      proc.args body.spawns ci.channel_classes proc.params param_values in
     let spawns =
     List.map (fun (s : spawn_def ast_node) ->
       let module_name = BuildScheduler.add_proc_task sched ci.file_name s.span s.d.proc s.d.compile_params in
@@ -1262,7 +1262,7 @@ let build_proc (config : Config.compile_config) sched module_name param_values
         threads = proc_threads; shared_vars_info; messages = msg_collection;
         proc_body = proc.body; spawns = List.map (fun (ident, spawn) -> (ident, spawn)) spawns}
     | Extern (extern_mod, _extern_body) ->
-      let msg_collection = MessageCollection.create [] proc.args [] ci.channel_classes [] in
+      let msg_collection = MessageCollection.create [] proc.args [] ci.channel_classes [] [] in
       {name = module_name; extern_module = Some extern_mod; threads = [];
         shared_vars_info = Hashtbl.create 0; messages = msg_collection;
         proc_body = proc.body; spawns = []}

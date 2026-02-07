@@ -131,6 +131,11 @@ let concretise_message params param_values (msg : Lang.message_def) =
 
 let concretise_array_dimm params param_values (dimm : Lang.array_dimensions) : array_dimm_concrete =
   let (int_param_env, _) = build_param_envs param_values params in
+  let mappings = ParamEnv.map_list (fun k v ->
+    Printf.sprintf "%s : %d\n" k v
+  ) int_param_env in
+  let mappings = String.concat "" mappings in
+
   let get_concrete_params n = 
     match ParamEnv.get_opt n with
     | Some v -> v
@@ -142,10 +147,11 @@ let concretise_array_dimm params param_values (dimm : Lang.array_dimensions) : a
       let n' = match concretise_and_get int_param_env n with
         | Some v -> ParamEnv.Concrete v
         | None ->
-          Printf.eprintf "[ERROR] Failed to concretise array dimension parameter: %s\n"
+          Printf.eprintf "[ERROR] Failed to concretise array dimension parameter: %s | Current Mappings = %s\n"
             (match n with
              | ParamEnv.Concrete i -> Printf.sprintf "Concrete(%d)" i
-             | ParamEnv.Param p -> Printf.sprintf "Param(%s)" p);
+             | ParamEnv.Param p -> Printf.sprintf "Param(%s)" p)
+            mappings;
           failwith "Array dimension concretisation failed"
       in
       Lang.OneDimmension (get_concrete_params n')
@@ -154,10 +160,11 @@ let concretise_array_dimm params param_values (dimm : Lang.array_dimensions) : a
       let n' = match concretise_and_get int_param_env n with
         | Some v -> ParamEnv.Concrete v
         | None ->
-          Printf.eprintf "[ERROR] Failed to concretise array dimension parameter: %s\n"
+          Printf.eprintf "[ERROR] Failed to concretise array dimension parameter: %s | Current Mappings = %s\n"
             (match n with
              | ParamEnv.Concrete i -> Printf.sprintf "Concrete(%d)" i
-             | ParamEnv.Param p -> Printf.sprintf "Param(%s)" p);
+             | ParamEnv.Param p -> Printf.sprintf "Param(%s)" p)
+            mappings;
           failwith "Array dimension concretisation failed"
       in
       Lang.MultiDimmension ((get_concrete_params n'), rest')

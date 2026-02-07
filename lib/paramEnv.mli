@@ -19,3 +19,8 @@ val get_opt : 'a maybe_param -> 'a option
 
 (** Try to concretise and then get the concrete value. *)
 val concretise_and_get : 'a param_env -> 'a maybe_param -> 'a option
+
+(** Iterate over the environment. *)
+val iter : (string -> 'a -> unit) -> 'a param_env -> unit
+
+val map_list : (string -> 'a -> 'b) -> 'a param_env -> 'b list

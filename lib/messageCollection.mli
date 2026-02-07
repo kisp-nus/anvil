@@ -12,7 +12,7 @@ type t = {
 (** [create channels args channel_classes] create a message type collection from given
 channels, passed-in endpoints, and channel classes.*)
 val create : Lang.channel_def Lang.ast_node list -> Lang.endpoint_def Lang.ast_node list ->
-             Lang.spawn_def Lang.ast_node list -> Lang.channel_class_def list -> Lang.param list -> t
+             Lang.spawn_def Lang.ast_node list -> Lang.channel_class_def list -> Lang.param list -> Lang.param_value list -> t
 
 val lookup_channel_class : Lang.channel_class_def list -> Lang.identifier -> Lang.channel_class_def option
 val lookup_endpoint : t -> string -> Lang.endpoint_def option

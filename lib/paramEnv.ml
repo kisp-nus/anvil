@@ -26,3 +26,10 @@ let get_opt p =
 let concretise_and_get env p =
   let n = concretise env p in
   Option.bind n get_opt
+
+let iter f env = ParamEnvTbl.iter f env
+
+let map_list f env = 
+  let res = ref [] in
+  ParamEnvTbl.iter (fun k v -> res := (f k v) :: !res) env;
+  List.rev !res

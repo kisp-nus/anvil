@@ -100,8 +100,9 @@ Below is a categorized list of the available examples, along with brief descript
 | [test_chan_array](test_chan_array.anvil) | Channel arrays and indexed access               |
 | [test_channel_param_array](test_channel_param_array.anvil) | Test channel array range with data parameters          |
 | [test_chan_multi_dimmension](test_chan_array_multidim.anvil)| Multi-dimensional channel arrays with concrete size instantiation |
+| [test_chan_array_parametric](test_chan_array_parametric.anvil)| Multi-dimensional channel arrays with parametric size instantiation |
 
-> **Total:** 11 examples
+> **Total:** 12 examples
 
 ---
 
@@ -164,4 +165,4 @@ Keeping this README up to date helps maintain clarity and usability for future u
 
 ---
 
-> **Current Example Count:** 47
+> **Current Example Count:** 48
