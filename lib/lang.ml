@@ -636,29 +636,19 @@ and string_of_literal (lit : literal) : string =
 
 let sub_ep_index (ep: message_specifier) (index: int) (id : identifier) : message_specifier =
   let is_array = String.contains ep.endpoint '[' && String.contains ep.endpoint ']'in
-  let sub_all_indices ep   =
-      let rec aux s acc =
-        match String.index_opt s '[' with
-        | Some start_idx ->
-            (match String.index_opt s ']' with
-            | Some end_idx when end_idx > start_idx ->
-                let before = String.sub s 0 start_idx in
-                let after = String.sub s (end_idx + 1) (String.length s - end_idx - 1) in
-                let index_str = String.sub s (start_idx + 1) (end_idx - start_idx - 1) in
-                if index_str = id then
-                  aux after (before ^ "[" ^ string_of_int index ^ "]" ^ acc)
-                else
-                  aux after (before ^ "[" ^ index_str ^ "]" ^ acc)
-            | _ -> acc ^ s)
-        | None -> acc ^ s
-      in
-      aux ep.endpoint ""
-  in
-
-        
   if is_array then
-    { endpoint = sub_all_indices ep; msg = ep.msg }
-  else
+    (
+    let base_name = String.sub ep.endpoint 0 (String.index ep.endpoint '[') in
+    let rest = String.sub ep.endpoint (String.index ep.endpoint '[') (String.length ep.endpoint - String.index ep.endpoint '[') in
+    let replaced_string = String.map (fun c ->
+      if c = id.[0] then
+        Char.chr (Char.code '0' + index)
+      else
+        c
+    ) rest in
+    { endpoint = base_name ^ replaced_string; msg = ep.msg }
+    )
+  else 
     ep
 
 let rec substitute_expr_identifier (id: identifier) (value: expr_node) (idx : int) (expr: expr_node)  : expr_node =
