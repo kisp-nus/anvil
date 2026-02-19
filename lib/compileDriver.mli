@@ -4,3 +4,5 @@
 exception CompileError of Except.error_message
 
 val compile : out_channel -> Config.compile_config -> unit
+
+val verification_run : string array -> unit

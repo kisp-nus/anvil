@@ -26,3 +26,17 @@ val rst : t
 (** Format the definition of a port. This involves translating the
     type and direction into their equivalents in Verilog. *)
 val format : TypedefMap.t -> Lang.macro_def list -> t -> string
+
+val assertformat : TypedefMap.t -> Lang.macro_def list -> t -> string
+
+val instanformat : t -> string
+
+val valid_port_names_from_endpoint : Lang.channel_class_def list -> Lang.endpoint_def -> string list
+
+val valid_port_names : Lang.channel_class_def list -> Lang.endpoint_def list -> string list
+
+val ack_port_names_from_endpoint : Lang.channel_class_def list -> Lang.endpoint_def -> string list
+
+val ack_port_names : Lang.channel_class_def list -> Lang.endpoint_def list -> string list
+
+val data_port_names : Lang.channel_class_def list -> Lang.endpoint_def list -> string list
