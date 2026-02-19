@@ -66,9 +66,15 @@ let compile_with_normal_output config =
       exit 1
   end
 
+
 let () =
-  let config = Anvil.Config.parse_args() in
-  if config.json_output then
-    compile_with_json_output config
-  else
-    compile_with_normal_output config
+  (* match --assert command *)
+  match Array.to_list Sys.argv with
+  | _ :: "assert" :: _ ->
+    Anvil.CompileDriver.verification_run Sys.argv
+  | _ ->
+      let config = Anvil.Config.parse_args () in
+      if config.json_output then
+        compile_with_json_output config
+      else
+        compile_with_normal_output config

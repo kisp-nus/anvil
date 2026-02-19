@@ -428,3 +428,421 @@ let generate (out : out_channel)
   let printer = CodegenPrinter.create out 2 in
   List.iter (codegen_proc printer graphs) graphs.event_graphs
 
+
+(*Add for Verification Run*)
+let verification_codegen_ports printer (graphs : event_graph_collection)
+                      (endpoints : endpoint_def list) =
+  let port_list = CodegenPort.gather_ports graphs.channel_classes endpoints in
+  let rec print_port_list port_list =
+  match port_list with
+  | [] -> ()
+  | port :: [] ->
+      CodegenPort.assertformat graphs.typedefs graphs.macro_defs port |> Printf.sprintf "%s;" |> CodegenPrinter.print_line printer
+  | port :: port_list' ->
+      CodegenPort.assertformat graphs.typedefs graphs.macro_defs port |> Printf.sprintf "%s;" |> CodegenPrinter.print_line printer;
+      print_port_list port_list'
+  in
+  print_port_list port_list;
+  port_list
+
+let verification_codegen_instantiations printer (graphs : event_graph_collection)
+                      (endpoints : endpoint_def list) =
+  let port_list = CodegenPort.gather_ports graphs.channel_classes endpoints in
+  CodegenPrinter.print_line printer ".clk_i(clk_i),";
+  CodegenPrinter.print_line printer ".rst_ni(rst_ni),";
+  let rec print_port_list port_list =
+  match port_list with
+  | [] -> ()
+  | port :: [] ->
+    let s = CodegenPort.instanformat port in 
+    Printf.sprintf ".%s (%s)" s s |> CodegenPrinter.print_line printer
+  | port :: port_list' ->
+    let s = CodegenPort.instanformat port in 
+    Printf.sprintf ".%s (%s)," s s |> CodegenPrinter.print_line printer;
+    print_port_list port_list'
+  in
+  print_port_list port_list;
+  port_list
+
+let verification_codegen_proc printer (graphs : EventGraph.event_graph_collection) (g : proc_graph) =
+
+  (* Match synchronisation and module direction *)
+  let assertion_declare_states (msg : message_def) (d : Lang.endpoint_direction) : string =
+    match (msg.send_sync, msg.recv_sync) with
+    | (Dynamic, Dynamic) ->
+      (match d with
+      | Left  -> "typedef enum logic [1:0] {WAIT_REQ, WAIT_ACK, DROP_VALID} state_t;"
+      | Right -> "typedef enum logic [1:0] {WAIT_ACK, DROP_VALID} state_t;")
+    | (_, Dynamic) -> "typedef enum logic [1:0] {WAIT_ACK, DROP_ACK} state_t;"
+    | (Dynamic, _) -> "typedef enum logic [1:0] {WAIT_REQ, DROP_VALID} state_t;"
+    | _ -> "None"
+  in
+
+  (* Print the input, output ports *)
+  let name_assert = g.name ^ "_assert" in
+  Printf.sprintf "module %s (\n  input clk_i, \n  input rst_ni \n);" name_assert |> CodegenPrinter.print_line printer ~lvl_delta_post:1;
+
+  (* Check the lifetime contract *)
+  let number_of_lifetime_cycles (d : Lang.delay_pat_chan_local) : int option =
+    match d with
+    | `Cycles n -> Some n
+    | _ -> None
+  in
+
+  (* Print the lifetime contract *)
+  let print_declared_cycle_bound (ep : Lang.endpoint_def) =
+    let cc = MessageCollection.lookup_channel_class graphs.channel_classes ep.channel_class |> Option.get in
+      let msg_def = List.hd cc.messages in
+        let msg_def = ParamConcretise.concretise_message cc.params ep.channel_params msg_def in
+        match msg_def.sig_types with
+        | [] -> Printf.printf "parameter int counter = #;\n"
+        | stype0 :: _ ->
+          match number_of_lifetime_cycles stype0.lifetime.e with
+          | Some n -> Printf.printf "parameter int counter = %d;\n" n 
+          | None -> Printf.printf "parameter int counter = #;\n" in
+  List.iter print_declared_cycle_bound g.messages.args;
+
+  (* Print declaration of the FSM states *)
+  List.iter (fun (ep : Lang.endpoint_def) ->
+    let cc = MessageCollection.lookup_channel_class graphs.channel_classes ep.channel_class |> Option.get in
+      let msg_def = List.hd cc.messages in
+        let msg_def = ParamConcretise.concretise_message cc.params ep.channel_params msg_def in
+          CodegenPrinter.print_line printer (assertion_declare_states msg_def ep.dir)
+  ) g.messages.args;
+
+  (* Print the shadow logics *)
+  Printf.sprintf "state_t state_prev, state_curr, state_next;" |> CodegenPrinter.print_line printer;
+  Printf.sprintf "int counter;" |> CodegenPrinter.print_line printer;
+
+  (* Print the declarations of ports, ack, valid, data ... *)
+  let _ = verification_codegen_ports printer graphs g.messages.args in
+  (
+    match g.extern_module, g.proc_body with
+    | _ ->
+      let initEvents = fst @@ List.hd g.threads in
+      codegen_endpoints printer graphs initEvents;
+  );
+  
+  (* Retreive the user module name *)
+  let s = AssertName.user_sv () in
+  (* Print user module instantiation *)
+  Printf.sprintf "%s user_sv (" s |> CodegenPrinter.print_line printer;
+  let _ = verification_codegen_instantiations printer graphs g.messages.args in
+  (
+    match g.extern_module, g.proc_body with
+    | _ ->
+      let initEvents = fst @@ List.hd g.threads in
+      codegen_endpoints printer graphs initEvents;
+  );
+  CodegenPrinter.print_line printer ~lvl_delta_pre:(-1) ~lvl_delta_post:1 ");";
+
+  (* Print anvil module instantiation *)
+  Printf.sprintf "%s anvil_sv (" g.name |> CodegenPrinter.print_line printer;
+  let _ = verification_codegen_instantiations printer graphs g.messages.args in
+  (
+    match g.extern_module, g.proc_body with
+    | _ ->
+      let initEvents = fst @@ List.hd g.threads in
+      codegen_endpoints printer graphs initEvents;
+  );
+  CodegenPrinter.print_line printer ~lvl_delta_pre:(-1) ~lvl_delta_post:1 ");";
+  
+  (* to check if there is only one signal, will modify this *)
+  let only_one default = function
+    | x :: _ -> x
+    | [] -> default
+  in
+  let valid_name = only_one "" (CodegenPort.valid_port_names graphs.channel_classes g.messages.args) in 
+  let ack_name = only_one "" (CodegenPort.ack_port_names graphs.channel_classes g.messages.args) in 
+  let datas = only_one "" (CodegenPort.data_port_names graphs.channel_classes g.messages.args) in
+
+  (* Fixed FSM always_ff block *)
+  let ff_block (state1 : string) (state2 : string): string =
+  String.concat "\n" [
+    Printf.sprintf "always_ff @(posedge clk_i or negedge rst_ni) begin";
+    Printf.sprintf "  if (!rst_ni) begin";
+    Printf.sprintf "    state_curr <= %s;" state1;
+    Printf.sprintf "    counter <= 0;";
+    Printf.sprintf "  end else begin";
+    Printf.sprintf "    state_prev <= state_curr;";
+    Printf.sprintf "    state_curr <= state_next;";
+    Printf.sprintf "";
+    Printf.sprintf "    if (state_curr == %s || counter != 0) begin" state2;
+    Printf.sprintf "      counter <= counter + 1;";
+    Printf.sprintf "    end";
+    Printf.sprintf "";
+    Printf.sprintf "    if (counter == N-1) begin";
+    Printf.sprintf "      counter <= 0;";
+    Printf.sprintf "    end";
+    Printf.sprintf "  end";
+    Printf.sprintf "end";
+  ]
+  in
+
+  (* FSM always_comb block for sender *)
+  let comb_block_nosyn_sender (valid_name : string) (ack_name : string) : string =
+  String.concat "\n" [
+    Printf.sprintf "always_comb begin";
+    Printf.sprintf "  case (state_curr)";
+    Printf.sprintf "";
+    Printf.sprintf "    WAIT_REQ: begin";
+    Printf.sprintf "      if (%s) begin" valid_name;
+    Printf.sprintf "        state_next = WAIT_ACK;";
+    Printf.sprintf "      end else begin";
+    Printf.sprintf "        state_next = WAIT_REQ;";
+    Printf.sprintf "      end";
+    Printf.sprintf "    end";
+    Printf.sprintf "";
+    Printf.sprintf "    WAIT_ACK: begin";
+    Printf.sprintf "      if (%s) begin" ack_name;
+    Printf.sprintf "        state_next = DROP_VALID;";
+    Printf.sprintf "      end else begin";
+    Printf.sprintf "        state_next = WAIT_ACK;";
+    Printf.sprintf "      end";
+    Printf.sprintf "    end";
+    Printf.sprintf "";
+    Printf.sprintf "    DROP_VALID: begin";
+    Printf.sprintf "      state_next = WAIT_REQ;";
+    Printf.sprintf "    end";
+    Printf.sprintf "";
+    Printf.sprintf "    default: state_next = WAIT_REQ;";
+    Printf.sprintf "  endcase";
+    Printf.sprintf "end";
+  ]
+  in
+
+  (* FSM always_comb block for receiver *)
+  let comb_block_nosyn_receiver (ack_name : string) : string =
+  String.concat "\n" [
+    Printf.sprintf "always_comb begin";
+    Printf.sprintf "  case (state_curr)";
+    Printf.sprintf "";
+
+    Printf.sprintf "    WAIT_ACK: begin";
+    Printf.sprintf "      if (%s) begin" ack_name;
+    Printf.sprintf "        state_next = DROP_VALID;";
+    Printf.sprintf "      end else begin";
+    Printf.sprintf "        state_next = WAIT_ACK;";
+    Printf.sprintf "      end";
+    Printf.sprintf "    end";
+    Printf.sprintf "";
+
+    Printf.sprintf "    DROP_VALID: begin";
+    Printf.sprintf "      state_next = WAIT_ACK;";
+    Printf.sprintf "    end";
+    Printf.sprintf "";
+
+    Printf.sprintf "    default: state_next = WAIT_ACK;";
+
+    Printf.sprintf "  endcase";
+    Printf.sprintf "end";
+  ]
+  in
+
+  let comb_block_syn (state1 : string) (state2 : string) (signal : string) : string =
+  String.concat "\n" [
+    Printf.sprintf "always_comb begin";
+    Printf.sprintf "  case (state_curr)";
+    Printf.sprintf "";
+
+    Printf.sprintf "    %s: begin" state1;
+    Printf.sprintf "      if (%s) begin" signal;
+    Printf.sprintf "        state_next = %s;" state2;
+    Printf.sprintf "      end else begin";
+    Printf.sprintf "        state_next = %s;" state1;
+    Printf.sprintf "      end";
+    Printf.sprintf "    end";
+    Printf.sprintf "";
+
+    Printf.sprintf "    %s: begin" state2;
+    Printf.sprintf "      state_next = %s;" state1;
+    Printf.sprintf "    end";
+    Printf.sprintf "";
+
+    Printf.sprintf "    default: state_next = %s;" state1;
+
+    Printf.sprintf "  endcase";
+    Printf.sprintf "end";
+  ]
+  in
+  
+  (* match the synchronisation and direction to print the correct fsm and assertion properties *)
+  let print_fsm_assertion (msg : message_def) (d : Lang.endpoint_direction) (valid_name : string) (ack_name : string) (data : string): string =
+    match (msg.send_sync, msg.recv_sync) with
+    | (Dynamic, Dynamic) -> 
+      (match d with
+      | Left  -> 
+        let block = ff_block "WAIT_REQ" "DROP_VALID" in
+        block
+        |> String.split_on_char '\n'
+        |> List.iter (fun line ->
+            CodegenPrinter.print_line printer line ~lvl_delta_post:0
+        );
+        
+        let block = comb_block_nosyn_sender valid_name ack_name in
+        block
+        |> String.split_on_char '\n'
+        |> List.iter (fun line ->
+            CodegenPrinter.print_line printer line ~lvl_delta_post:0
+        );
+        String.concat "\n" [
+          Printf.sprintf "`include \"./properties/nosyn_user_sender.svh\"\n";
+          Printf.sprintf "assert property (data_stable_valid_high(%s, state_curr, %s))" valid_name data;
+          Printf.sprintf "else $error(\"Assertion Failed: data_stable_valid_high\");\n";
+          Printf.sprintf "assert property (valid_high_until_ack_high(%s, state_curr))" valid_name;
+          Printf.sprintf "else $error(\"Assertion Failed: valid_high_until_ack_high\");\n";
+          Printf.sprintf "assert property (ack_high_valid_low(%s, state_curr, %s))" valid_name ack_name;
+          Printf.sprintf "else $error(\"Assertion Failed: ack_high_valid_low\");\n";
+          Printf.sprintf "assert property (data_stable_N_cycles_after_ack_high(state_curr, counter, %s))" data;
+          Printf.sprintf "else $error(\"Assertion Failed: data_stable_N_cycles_after_ack_high\");\n";
+          Printf.sprintf "assert property (wait_req_ack_low(state_curr, %s))" ack_name;
+          Printf.sprintf "else $error(\"Assertion Failed: wait_req_ack_low\');\n";
+        ]
+      | Right -> 
+        let block = ff_block "WAIT_ACK" "DROP_VALID" in
+        block
+        |> String.split_on_char '\n'
+        |> List.iter (fun line ->
+            CodegenPrinter.print_line printer line ~lvl_delta_post:0
+        );
+        
+        let block = comb_block_nosyn_receiver ack_name in
+        block
+        |> String.split_on_char '\n'
+        |> List.iter (fun line ->
+            CodegenPrinter.print_line printer line ~lvl_delta_post:0
+        );
+        String.concat "\n" [
+          Printf.sprintf "`include \"./properties/nosyn_user_receiver.svh\"\n";
+          Printf.sprintf "assert property (ack_low_when_valid_high(state_curr, %s, %s))" valid_name ack_name;
+          Printf.sprintf "else $error(\"Assertion Failed: ack_low_when_valid_high\");\n";
+          Printf.sprintf "assert property (ack_high_valid_low(state_curr, %s, %s))" valid_name ack_name;
+          Printf.sprintf "else $error(\"Assertion Failed: ack_high_valid_low\");\n";
+          Printf.sprintf "assert property (ack_low_after_handshake(state_prev, %s))" ack_name;
+          Printf.sprintf "else $error(\"Assertion Failed: ack_low_after_handshake\");\n";
+          Printf.sprintf "assert property (property data_stable_N_cycles_after_ack_high (state_curr, counter, %s))" data;
+          Printf.sprintf "else $error(\"Assertion Failed: property data_stable_N_cycles_after_ack_high\");\n";
+        ] )
+    | (_, Dynamic) -> 
+      (match d with 
+      | Left ->
+        let block = ff_block "WAIT_ACK" "DROP_ACK" in
+        block
+        |> String.split_on_char '\n'
+        |> List.iter (fun line ->
+            CodegenPrinter.print_line printer line ~lvl_delta_post:0
+        );
+
+        let block = comb_block_syn "WAIT_ACK" "DROP_ACK" ack_name in
+        block
+        |> String.split_on_char '\n'
+        |> List.iter (fun line ->
+            CodegenPrinter.print_line printer line ~lvl_delta_post:0
+        );
+        String.concat "\n" [
+          Printf.sprintf "`include \"./properties/syn_recv_dynamic_user_sender.svh\"\n";
+          Printf.sprintf "assert property (data_stable_N_cycles (state_curr, counter, %s))" data;
+          Printf.sprintf "else $error(\"Assertion Failed: data_stable_N_cycles\");\n";
+        ]
+      | Right -> 
+        let block = ff_block "WAIT_ACK" "DROP_ACK" in
+        block
+        |> String.split_on_char '\n'
+        |> List.iter (fun line ->
+            CodegenPrinter.print_line printer line ~lvl_delta_post:0
+        );
+
+        let block = comb_block_syn "WAIT_ACK" "DROP_ACK" ack_name in
+        block
+        |> String.split_on_char '\n'
+        |> List.iter (fun line ->
+            CodegenPrinter.print_line printer line ~lvl_delta_post:0
+        );
+        String.concat "\n" [
+          Printf.sprintf "`include \"syn_recv_dynamic_user_receiver.svh\"\n";
+          Printf.sprintf "assert property (ack_low_during_DROP_ACK (state_curr, %s))" ack_name;
+          Printf.sprintf "else $error(\"Assertion Failed: ack_low_during_DROP_ACK\");\n";
+          Printf.sprintf "assert property (data_stable_N_cycles (state_curr, counter, %s))" data;
+          Printf.sprintf "else $error(\"Assertion Failed: data_stable_N_cycles\");\n";
+        ])
+    | (Dynamic, _) -> 
+      (match d with
+      | Left ->
+        let block = ff_block "WAIT_REQ" "DROP_VALID" in
+        block
+        |> String.split_on_char '\n'
+        |> List.iter (fun line ->
+            CodegenPrinter.print_line printer line ~lvl_delta_post:0
+        );
+
+        let block = comb_block_syn "WAIT_REQ" "DROP_VALID" valid_name in
+        block
+        |> String.split_on_char '\n'
+        |> List.iter (fun line ->
+            CodegenPrinter.print_line printer line ~lvl_delta_post:0
+        );
+        String.concat "\n" [
+          Printf.sprintf "`include \"./properties/syn_send_dynamic_user_sender.svh\"\n";
+          Printf.sprintf "assert property (data_stable_N_cycles (state_curr, counter, %s))" data;
+          Printf.sprintf "else $error(\"Assertion Failed: data_stable_N_cycles\");\n";
+          Printf.sprintf "assert property (valid_low_during_DROP_VALID (state_curr, %s)" valid_name;
+          Printf.sprintf "else $error(\"Assertion Failed: data_stable_N_cycles\");\n";
+        ]
+      | Right -> 
+        let block = ff_block "WAIT_REQ" "DROP_VALID" in
+        block
+        |> String.split_on_char '\n'
+        |> List.iter (fun line ->
+            CodegenPrinter.print_line printer line ~lvl_delta_post:0
+        );
+
+        let block = comb_block_syn "WAIT_REQ" "DROP_VALID" valid_name in
+        block
+        |> String.split_on_char '\n'
+        |> List.iter (fun line ->
+            CodegenPrinter.print_line printer line ~lvl_delta_post:0
+        );
+        String.concat "\n" [
+          Printf.sprintf "`include \"./properties/syn_send_dynamic_user_receiver.svh\"\n";
+          Printf.sprintf "assert property (data_stable_N_cycles (state_curr, counter, %s))" data;
+          Printf.sprintf "else $error(\"Assertion Failed: data_stable_N_cycles\");\n";
+        ])
+    | _ -> "None"
+  in
+  List.iter (fun (ep : Lang.endpoint_def) ->
+    let cc = MessageCollection.lookup_channel_class graphs.channel_classes ep.channel_class |> Option.get in
+      let msg_def = List.hd cc.messages in
+        let msg_def = ParamConcretise.concretise_message cc.params ep.channel_params msg_def in
+          CodegenPrinter.print_line printer (print_fsm_assertion msg_def ep.dir valid_name ack_name datas)
+  ) g.messages.args;
+
+
+  CodegenPrinter.print_line printer ~lvl_delta_pre:(-1) "endmodule"
+
+let verification_generate_extern_import out file_name =
+  In_channel.with_open_text file_name
+    (fun in_channel ->
+      let eof = ref false in
+      while not !eof do
+        match In_channel.input_line in_channel with
+        | Some line ->
+          Out_channel.output_string out line;
+          Out_channel.output_char out '\n'
+        | None -> eof := true
+      done
+    )
+
+let verification_generate (out : out_channel)
+             (config : Config.compile_config)
+             (graphs : EventGraph.event_graph_collection) : unit =
+  if config.verbose then (
+    Printf.eprintf "==== CodeGen Details ====\n";
+    List.iter (fun (pg : proc_graph) ->
+      List.iter (fun (g, _) ->
+        EventGraphOps.print_dot_graph g Out_channel.stderr
+      ) pg.threads
+    ) graphs.event_graphs;
+  );
+  let printer = CodegenPrinter.create out 2 in
+  List.iter (verification_codegen_proc printer graphs) graphs.event_graphs
+
