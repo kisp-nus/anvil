@@ -247,7 +247,12 @@ type_def:
 | KEYWORD_ENUM; name = IDENT; params = param_list?;
   LEFT_BRACE; variants = separated_nonempty_list(COMMA, variant_def); RIGHT_BRACE
   {
-    { name = name; body = `Variant variants; params = Option.value ~default:[] params } : Lang.type_def
+    { name = name; body = `Variant (None,variants); params = Option.value ~default:[] params } : Lang.type_def
+  }
+| KEYWORD_ENUM; name = IDENT; dtype = data_type; params = param_list?;
+  LEFT_BRACE; variants = separated_nonempty_list(COMMA, variant_def); RIGHT_BRACE
+  {
+    { name = name; body = `Variant (Some dtype, variants); params = Option.value ~default:[] params } : Lang.type_def
   }
 | KEYWORD_STRUCT; name = IDENT; params = param_list?;
   LEFT_BRACE; fields = separated_nonempty_list(COMMA, field_def); RIGHT_BRACE
@@ -259,7 +264,10 @@ type_def:
 
 variant_def:
 | name = IDENT; dtype_opt = variant_type_spec?
-  { (name, dtype_opt) }
+  { (name, dtype_opt, None) }
+
+| name = IDENT; EQUAL; lit = literal_val
+  { (name, None, Some lit) } 
 ;
 
 variant_type_spec:
@@ -268,6 +276,16 @@ variant_type_spec:
 | LEFT_PAREN; dtype = data_type; COMMA; more_dtypes = separated_nonempty_list(COMMA, data_type); RIGHT_PAREN
   { `Tuple (dtype::more_dtypes) }
 ;
+
+literal_val:
+| literal_str = BIT_LITERAL
+  { ParserHelper.bit_literal_of_string literal_str }
+| literal_str = DEC_LITERAL
+  { ParserHelper.dec_literal_of_string literal_str }
+| literal_str = HEX_LITERAL
+  { ParserHelper.hex_literal_of_string literal_str }
+| literal_val = INT
+  { Lang.NoLength literal_val}
 
 field_def:
 | name = IDENT; COLON; dtype = data_type
@@ -651,6 +669,8 @@ bin_expr:
   { Lang.Binop (Lang.Gte, v1, (`Single v2)) }
 | v1 = node(expr); PLUS; v2 = node(expr)
   { Lang.Binop (Lang.Add, v1, (`Single v2)) }
+| v1 = node(expr); ASTERISK; v2 = node(expr)
+  { Lang.Binop (Lang.Mul, v1, (`Single v2)) }
 | v1 = node(expr); MINUS; v2 = node(expr)
   { Lang.Binop (Lang.Sub, v1, (`Single v2)) }
 | v1 = node(expr); XOR; v2 = node(expr)

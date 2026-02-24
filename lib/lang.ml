@@ -92,11 +92,87 @@ let sig_lifetime_const : sig_lifetime =
 (** Direction of an endpoint. *)
 type endpoint_direction = Left | Right
 
+type bit = [`Z0 | `Z1]
+type digit = [`Z0 | `Z1 | `Z2 | `Z3 | `Z4 | `Z5 | `Z6 | `Z7 | `Z8 | `Z9]
+type hexit = [`Z0 | `Z1 | `Z2 | `Z3 | `Z4 | `Z5 | `Z6 | `Z7 | `Z8 | `Z9 |
+            `Za | `Zb | `Zc | `Zd | `Ze | `Zf]
+type all_digit = hexit
+
+type literal =
+| Binary of int * bit list
+| Decimal of int * digit list
+| Hexadecimal of int * hexit list
+| WithLength of int * int
+| NoLength of int
+
+
+let string_of_digit d : string =
+  match d with
+  | `Z0 -> "0"
+  | `Z1 -> "1"
+  | `Z2 -> "2"
+  | `Z3 -> "3"
+  | `Z4 -> "4"
+  | `Z5 -> "5"
+  | `Z6 -> "6"
+  | `Z7 -> "7"
+  | `Z8 -> "8"
+  | `Z9 -> "9"
+  | `Za -> "a"
+  | `Zb -> "b"
+  | `Zc -> "c"
+  | `Zd -> "d"
+  | `Ze -> "e"
+  | `Zf -> "f"
+
+let value_of_digit d : int =
+  match d with
+  | `Z0 -> 0x0
+  | `Z1 -> 0x1
+  | `Z2 -> 0x2
+  | `Z3 -> 0x3
+  | `Z4 -> 0x4
+  | `Z5 -> 0x5
+  | `Z6 -> 0x6
+  | `Z7 -> 0x7
+  | `Z8 -> 0x8
+  | `Z9 -> 0x9
+  | `Za -> 0xa
+  | `Zb -> 0xb
+  | `Zc -> 0xc
+  | `Zd -> 0xd
+  | `Ze -> 0xe
+  | `Zf -> 0xf
+
+
+
+let literal_bit_len (lit : literal) : int option =
+  match lit with
+  | Binary (n, _) | Decimal (n, _) | Hexadecimal (n, _) | WithLength (n, _) -> Some n
+  | NoLength v -> Some (Utils.int_log2 (v + 1))
+
+let literal_eval (lit : literal) : int =
+  match lit with
+  | Binary (_, b) ->
+      List.fold_left (fun n x -> n * 2 + (value_of_digit x)) 0 b
+  | Decimal (_, d) ->
+      List.fold_left (fun n x -> n * 10 + (value_of_digit x)) 0 d
+  | Hexadecimal (_, h) ->
+      List.fold_left (fun n x -> n * 16 + (value_of_digit x)) 0 h
+  | WithLength (_, v) -> v
+  | NoLength v -> v
+
+let dtype_of_literal (lit : literal) =
+  let n = literal_bit_len lit |> Option.get in
+  match n with
+  | 1 -> `Logic
+  | _ -> `Array (`Logic, ParamEnv.Concrete n)
+
 (** A data type. *)
 type data_type = [
   | `Logic
   | `Array of data_type * int maybe_param
-  | `Variant of (identifier * data_type option) list (** ADT sum type *)
+  | `Variant of (data_type option)*(identifier * (data_type option)*(literal option)) list (** ADT sum type *)
   | `Record of (identifier * data_type) list (** ADT product type *)
   | `Tuple of data_type list
   | `Opaque of identifier (** type reserved for internal purposes *)
@@ -160,25 +236,27 @@ and type_def = {
 let unit_dtype = `Tuple []
 
 (** Number of bits required to hold the tag for a variant type. *)
-let variant_tag_size (v: [< `Variant of (identifier * data_type option) list]) : int =
+let variant_tag_size (v: [>`Variant of (data_type option)*((identifier * (data_type option)*(literal option)) list)]) : int =
   match v with
-  | `Variant vlist -> List.length vlist |> Utils.int_log2
+  | `Variant (_, vlist) -> List.length vlist |> Utils.int_log2
 
 (** Data type a variant type constructor. *)
-let variant_lookup_dtype (v: [< `Variant of (identifier * data_type option) list]) (cstr: identifier) : data_type option =
-  match v with
-  | `Variant vlist ->
-      List.find_opt (fun x -> (fst x) = cstr) vlist |> Option.map snd |> Option.join
+let variant_lookup_dtype (v: [> `Variant of (data_type option)*((identifier * (data_type option) * (literal option)) list)]) (cstr: identifier) : data_type option =
+    match v with
+    | `Variant (_, vlist) ->
+      List.find_opt (fun (x,_dt,_vl) -> x = cstr) vlist |> Option.map (fun (_,dt,_) -> dt) |> Option.join
 
 (** Index of a variant type constructor. *)
-let variant_lookup_index (v: [< `Variant of (identifier * data_type option) list]) (cstr: identifier) : int option =
+let variant_lookup_index (v: [> `Variant of (data_type option)*((identifier * (data_type option) * (literal option)) list)]) (cstr: identifier) : int option =
   let res : int option ref = ref None in
   match v with
-  | `Variant vlist ->
-      List.iteri (fun i x ->
+  | `Variant (_,vlist) ->
+      List.iteri (fun i (x,_,v) ->
         if Option.is_none !res then begin
-          if (fst x) = cstr then
-            res := Some i
+          if x = cstr then
+            if Option.is_none v then
+              res := Some i
+            else res := Some (Option.get v |> literal_eval )
           else ()
         end else ()) vlist;
   !res
@@ -265,78 +343,6 @@ type channel_def = {
 
 (* expressions *)
 
-type bit = [`Z0 | `Z1]
-type digit = [`Z0 | `Z1 | `Z2 | `Z3 | `Z4 | `Z5 | `Z6 | `Z7 | `Z8 | `Z9]
-type hexit = [`Z0 | `Z1 | `Z2 | `Z3 | `Z4 | `Z5 | `Z6 | `Z7 | `Z8 | `Z9 |
-            `Za | `Zb | `Zc | `Zd | `Ze | `Zf]
-type all_digit = hexit
-
-let string_of_digit d : string =
-  match d with
-  | `Z0 -> "0"
-  | `Z1 -> "1"
-  | `Z2 -> "2"
-  | `Z3 -> "3"
-  | `Z4 -> "4"
-  | `Z5 -> "5"
-  | `Z6 -> "6"
-  | `Z7 -> "7"
-  | `Z8 -> "8"
-  | `Z9 -> "9"
-  | `Za -> "a"
-  | `Zb -> "b"
-  | `Zc -> "c"
-  | `Zd -> "d"
-  | `Ze -> "e"
-  | `Zf -> "f"
-
-let value_of_digit d : int =
-  match d with
-  | `Z0 -> 0x0
-  | `Z1 -> 0x1
-  | `Z2 -> 0x2
-  | `Z3 -> 0x3
-  | `Z4 -> 0x4
-  | `Z5 -> 0x5
-  | `Z6 -> 0x6
-  | `Z7 -> 0x7
-  | `Z8 -> 0x8
-  | `Z9 -> 0x9
-  | `Za -> 0xa
-  | `Zb -> 0xb
-  | `Zc -> 0xc
-  | `Zd -> 0xd
-  | `Ze -> 0xe
-  | `Zf -> 0xf
-
-type literal =
-| Binary of int * bit list
-| Decimal of int * digit list
-| Hexadecimal of int * hexit list
-| WithLength of int * int
-| NoLength of int
-
-let literal_bit_len (lit : literal) : int option =
-  match lit with
-  | Binary (n, _) | Decimal (n, _) | Hexadecimal (n, _) | WithLength (n, _) -> Some n
-  | NoLength v -> Some (Utils.int_log2 (v + 1))
-
-let literal_eval (lit : literal) : int =
-  match lit with
-  | Binary (_, b) ->
-      List.fold_left (fun n x -> n * 2 + (value_of_digit x)) 0 b
-  | Decimal (_, d) ->
-      List.fold_left (fun n x -> n * 10 + (value_of_digit x)) 0 d
-  | Hexadecimal (_, h) ->
-      List.fold_left (fun n x -> n * 16 + (value_of_digit x)) 0 h
-  | WithLength (_, v) -> v
-  | NoLength v -> v
-
-let dtype_of_literal (lit : literal) =
-  let n = literal_bit_len lit |> Option.get in
-  match n with
-  | 1 -> `Logic
-  | _ -> `Array (`Logic, ParamEnv.Concrete n)
 
 type binop = Add | Sub | Xor | And | Or | Lt | Gt | Lte | Gte |
              Shl | Shr | Eq | Neq | Mul | In | LAnd | LOr
@@ -600,11 +606,13 @@ and string_of_data_type (dtype : data_type) : string =
       | ParamEnv.Param _ -> "Param"
     in
     "Array[" ^ n' ^ "] (" ^ string_of_data_type d ^ ")"
-  | `Variant (id_opt_list) ->
-      "Variant (" ^ String.concat ", " (List.map (fun (id, dt_opt) ->
-        match dt_opt with
-        | Some dt -> id ^ ": " ^ string_of_data_type dt
-        | None -> id) id_opt_list) ^ ")"
+  | `Variant (_, (id_opt_list)) ->
+      "Variant (" ^ String.concat ", " (List.map (fun (id, dt_opt, val_opt) ->
+        match (dt_opt, val_opt) with
+        | (Some dt, None) -> id ^ ": " ^ string_of_data_type dt
+        | (None, Some lit) -> id ^ ": " ^ string_of_literal lit
+        | (Some dt, Some lit) -> id ^ ": " ^ string_of_data_type dt ^ " = " ^ string_of_literal lit
+        | (None, None) -> id) id_opt_list) ^ ")"
   | `Record fields ->
       "Record (" ^ String.concat ", " (List.map (fun (field_name, field_type) ->
         field_name ^ ": " ^ string_of_data_type field_type) fields) ^ ")"

@@ -35,15 +35,24 @@ let rec data_type_size (type_defs : t) (macro_defs : macro_def list) (dtype : da
       | None -> failwith("Unknown Datatype: "^type_name)
       in
       ParamConcretise.concretise_dtype type_def.params params type_def.body |> data_type_size type_defs macro_defs
-  | `Variant vlist as var ->
-      let mx_data_size = List.fold_left (fun m n -> max m (
-        let inner_dtype_op = snd n in
+  | `Variant (dt,vlist) as var ->
+      let mx_data_size = List.fold_left (fun m (_,dt,_) -> max m (
+        let inner_dtype_op = dt in
         match inner_dtype_op with
         | None -> 0
         | Some inner_dtype -> data_type_size type_defs macro_defs inner_dtype
       )) 0 vlist
       and tag_size = variant_tag_size var in
-      mx_data_size + tag_size
+      let total_size = mx_data_size + tag_size in
+      let ctor_names = List.map (fun (id,_,_) -> id) vlist |> String.concat ", " in
+      if Option.is_some dt then
+        let dt_concrete = Option.get dt in
+        let dt_size = data_type_size type_defs macro_defs dt_concrete in
+        if dt_size < total_size then 
+          raise (TypeError [Text ("Variant tag size " ^ string_of_int tag_size ^ " + max data size " ^ string_of_int mx_data_size ^ " exceeds specified size " ^ string_of_int dt_size ^ "; constructors: " ^ ctor_names)])
+        else dt_size
+      else
+        total_size
   | `Record flist ->
       List.fold_left (fun m n -> m + (snd n |> data_type_size type_defs macro_defs)) 0 flist
   | `Tuple comp_dtype_list ->

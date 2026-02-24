@@ -49,16 +49,18 @@ and concretise_dtype_params int_env type_env (dtype : data_type) : data_type =
                         fields
     in
     `Record fields'
-  | `Variant variants ->
+  | `Variant (dtype_opt, variants) ->
     let variants' = List.map
-            (fun (var_ident, var_dtype_opt) ->
+            (fun (var_ident, var_dtype_opt, var_val_opt) ->
               (
                 var_ident,
-                Option.map (concretise_dtype_params int_env type_env) var_dtype_opt
+                Option.map (concretise_dtype_params int_env type_env) var_dtype_opt,
+                var_val_opt
               ))
             variants
             in
-    `Variant variants'
+    let dtype_opt' = Option.map (concretise_dtype_params int_env type_env) dtype_opt in
+    `Variant (dtype_opt', variants')
   | `Tuple elems_dtypes ->
     let elems_dtypes' = List.map (concretise_dtype_params int_env type_env) elems_dtypes in
     `Tuple elems_dtypes'

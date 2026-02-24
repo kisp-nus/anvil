@@ -1035,8 +1035,9 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
   | Construct (cstr_spec, cstr_expr_opt) ->
     (
       match TypedefMap.data_type_name_resolve ci.typedefs @@ `Named (cstr_spec.variant_ty_name, []) with
-      | Some (`Variant _ as dtype) ->
-        let e_dtype_opt = variant_lookup_dtype dtype cstr_spec.variant in
+      | Some (`Variant (dtype_opt, variants)) ->
+        let variant_val = `Variant (dtype_opt, variants) in
+        let e_dtype_opt = variant_lookup_dtype variant_val cstr_spec.variant in
         (
           match e_dtype_opt, cstr_expr_opt with
           | Some e_dtype, Some cstr_expr ->
@@ -1044,10 +1045,10 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
             (* if td.dtype <> e_dtype then
               raise (Except.TypeError [Text ("In variant construction: Invalid data type for " ^ cstr_spec.variant ^ ": expected " ^ (string_of_data_type e_dtype) ^ " got " ^ (string_of_data_type td.dtype)); Except.codespan_local e.span]); *)
             let w = unwrap_or_err "Invalid value in variant construction" cstr_expr.span td.w in
-            let tag_size = variant_tag_size dtype
+            let tag_size = variant_tag_size variant_val
             and data_size = TypedefMap.data_type_size ci.typedefs ci.macro_defs e_dtype
-            and tot_size = TypedefMap.data_type_size ci.typedefs ci.macro_defs dtype
-            and var_idx = variant_lookup_index dtype cstr_spec.variant
+            and tot_size = TypedefMap.data_type_size ci.typedefs ci.macro_defs variant_val
+            and var_idx = variant_lookup_index variant_val cstr_spec.variant
               |> unwrap_or_err ("Invalid constructor: " ^ cstr_spec.variant) e.span in
             let (wires', w_tag) = WireCollection.add_literal graph.thread_id ci.typedefs ci.macro_defs
               (WithLength (tag_size, var_idx)) graph.wires in
@@ -1063,9 +1064,9 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
             graph.wires <- wires';
             { td with w = Some new_w }
           | None, None ->
-            let tag_size = variant_tag_size dtype
-            and tot_size = TypedefMap.data_type_size ci.typedefs ci.macro_defs dtype
-            and var_idx = variant_lookup_index dtype cstr_spec.variant
+            let tag_size = variant_tag_size variant_val
+            and tot_size = TypedefMap.data_type_size ci.typedefs ci.macro_defs variant_val
+            and var_idx = variant_lookup_index variant_val cstr_spec.variant
               |> unwrap_or_err ("Invalid constructor: " ^ cstr_spec.variant) e.span in
             let (wires', w_tag) = WireCollection.add_literal graph.thread_id ci.typedefs ci.macro_defs
               (WithLength (tag_size, var_idx)) graph.wires in
