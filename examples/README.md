@@ -147,7 +147,6 @@ Below is a categorized list of the available examples, along with brief descript
 ## Example Subdirectories
 
 * `edge_cases/` — Regression tests for bug fixes and corner cases
-* `pipeline/` — Reusable pipeline component library
 * `should_fail/` — Examples expected to fail type or borrow checking
 * `should_pass/` — Examples expected to pass type and borrow checking
 
