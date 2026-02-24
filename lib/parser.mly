@@ -86,6 +86,7 @@
 %token KEYWORD_SHARED       (* shared *)
 %token KEYWORD_ASSIGNED     (* assigned *)
 %token KEYWORD_BY           (* by *)
+%nonassoc PREC_NAMED_TYPE
 %right LEFT_ABRACK RIGHT_ABRACK LEFT_ABRACK_EQ RIGHT_ABRACK_EQ
 %right DOUBLE_GT SEMICOLON
 %right KEYWORD_LET KEYWORD_SET KEYWORD_PUT
@@ -834,7 +835,7 @@ data_type_no_array:
 //   { `Parametrized (dtype, n) }
 | KEYWORD_LOGIC
   { `Logic }
-| typename = IDENT
+| typename = IDENT %prec PREC_NAMED_TYPE
   { `Named (typename, []) }
 | typename = IDENT; LEFT_ABRACK; compile_params = separated_list(COMMA, param_value); RIGHT_ABRACK;
   { `Named (typename, compile_params) }
