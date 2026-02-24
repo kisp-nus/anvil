@@ -10,7 +10,7 @@ let ident = ['a'-'z' 'A'-'Z' '_'] ['a'-'z' 'A'-'Z' '0'-'9' '_']*
 let int = ['0'-'9']+
 let bit_literal = int "\'b" ['0'-'1']+
 let dec_literal = int "\'d" ['0'-'9']+
-let hex_literal = int "\'h" ['0'-'9' 'a'-'f']+
+let hex_literal = int "\'h" ['0'-'9' 'a'-'f' 'A'-'F']+
 
 rule read =
   parse
