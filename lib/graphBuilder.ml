@@ -452,7 +452,9 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
     let lvi = lvalue_info_of graph ci ctx e.span lval in
     let err_string = DTypeCheck.fmt_assign lval lvi.lval_dtype td.dtype in
     check_dtype err_string (Some lvi.lval_dtype) td.dtype e.span ci.file_name ci.weak_typecasts ci.typedefs ci.macro_defs;
-    ctx.current.actions <- (RegAssign (lvi, td) |> tag_with_span e.span)::ctx.current.actions;
+    let action = RegAssign (lvi, td) |> tag_with_span e.span in
+    ctx.current.actions <- action::ctx.current.actions;
+    AstAnnotator.attach_event e ctx.current None;
     Typing.cycles_data graph 1 ctx.current
   | Call (id, arg_list) ->
       let func = List.find_opt (fun (f: Lang.func_def) -> f.name = id) ci.func_defs
@@ -663,7 +665,9 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
 
     BuildContext.branch_merge ctx [ctx_true; ctx_false];
 
-    ctx_true.current.actions <- (ImmediateSend (send_pack.send_msg_spec, td_send_data) |> tag_with_span e.span)::ctx_true.current.actions;
+    let action = ImmediateSend (send_pack.send_msg_spec, td_send_data) |> tag_with_span e.span in
+    ctx_true.current.actions <- action::ctx_true.current.actions;
+    AstAnnotator.attach_event e ctx_true.current None;
 
     let ctx_br = BuildContext.branch graph ctx branch_info in
     br_side_true.branch_event <- Some ctx_br.current;
@@ -725,7 +729,9 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
 
     BuildContext.branch_merge ctx [ctx_true_no_binding; ctx_false];
 
-    ctx_true.current.actions <- (ImmediateRecv recv_pack.recv_msg_spec |> tag_with_span e.span)::ctx_true.current.actions;
+    let action = ImmediateRecv recv_pack.recv_msg_spec |> tag_with_span e.span in
+    ctx_true.current.actions <- action::ctx_true.current.actions;
+    AstAnnotator.attach_event e ctx_true.current None;
 
     let ctx_br = BuildContext.branch graph ctx branch_info in
     br_side_true.branch_event <- Some ctx_br.current;
@@ -897,10 +903,14 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
       match op with
       | DebugPrint (s, e_list) ->
         let timed_ws = List.map (visit_expr graph ci ctx) e_list in
-        ctx.current.actions <- (let open EventGraph in DebugPrint (s, timed_ws) |> tag_with_span e.span)::ctx.current.actions;
+        let action = let open EventGraph in DebugPrint (s, timed_ws) |> tag_with_span e.span in
+        ctx.current.actions <- action::ctx.current.actions;
+        AstAnnotator.attach_event e ctx.current None;
         {w = None; lt = EventGraphOps.lifetime_const ctx.current; reg_borrows = []; dtype = unit_dtype}
       | DebugFinish ->
-        ctx.current.actions <- (let open EventGraph in tag_with_span e.span DebugFinish)::ctx.current.actions;
+        let action = let open EventGraph in tag_with_span e.span DebugFinish in
+        ctx.current.actions <- action::ctx.current.actions;
+        AstAnnotator.attach_event e ctx.current None;
         {w = None; lt = EventGraphOps.lifetime_const ctx.current; reg_borrows = []; dtype = unit_dtype}
     )
   | Send send_pack ->
@@ -918,13 +928,19 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
     let msg_dtype = (List.hd msg.sig_types).dtype in
     let err_string = DTypeCheck.fmt_send send_pack.send_msg_spec.endpoint msg_dtype td.dtype in
     check_dtype err_string (Some msg_dtype) td.dtype e.span ci.file_name ci.weak_typecasts ci.typedefs ci.macro_defs;
+
     let ntd = Typing.send_msg_data graph send_pack.send_msg_spec ctx.current in
-    ctx.current.sustained_actions <-
-      ({
-        until = ntd.lt.live;
-        ty = Send (send_pack.send_msg_spec, td)
-      } |> tag_with_span e.span)::ctx.current.sustained_actions;
+
+    let sustained_action = ({
+      until = ntd.lt.live;
+      ty = Send (send_pack.send_msg_spec, td)
+    } |> tag_with_span e.span) in
+
+    ctx.current.sustained_actions <- sustained_action::ctx.current.sustained_actions;
+    AstAnnotator.attach_event e ctx.current (Some ntd.lt.live);
+
     ntd
+
   | Recv recv_pack ->
     let ep  = recv_pack.recv_msg_spec.endpoint in
     if not (MessageCollection.endpoint_owned graph.messages ep) then
@@ -937,10 +953,19 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
     );
     let (wires', w) = WireCollection.add_msg_port graph.thread_id ci.typedefs ci.macro_defs recv_pack.recv_msg_spec 0 msg graph.wires in
     graph.wires <- wires';
+
     let ntd = Typing.recv_msg_data graph (Some w) recv_pack.recv_msg_spec msg ctx.current in
-    ctx.current.sustained_actions <-
-      ({until = ntd.lt.live; ty = Recv recv_pack.recv_msg_spec} |> tag_with_span e.span)::ctx.current.sustained_actions;
+
+    let sustained_action = ({
+      until = ntd.lt.live;
+      ty = Recv recv_pack.recv_msg_spec
+    } |> tag_with_span e.span) in
+
+    ctx.current.sustained_actions <- sustained_action::ctx.current.sustained_actions;
+    AstAnnotator.attach_event e ctx.current (Some ntd.lt.live);
+
     ntd
+
   | Indirect (e', fieldname) ->
     let td = visit_expr graph ci ctx e' in
     let w = unwrap_or_err "Invalid value in indirection" e'.span td.w in
@@ -1085,7 +1110,9 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
         shared_info.value.w <- value_td.w;
         shared_info.assigned_at <- Some ctx.current;
       );
-      ctx.current.actions <- (PutShared (id, shared_info, value_td) |> tag_with_span e.span)::ctx.current.actions;
+      let action = PutShared (id, shared_info, value_td) |> tag_with_span e.span in
+      ctx.current.actions <- action::ctx.current.actions;
+      AstAnnotator.attach_event action ctx.current None;
       Typing.const_data graph None (unit_dtype) ctx.current
     else
       raise (event_graph_error_default "Shared variable assigned in wrong thread" e.span)
