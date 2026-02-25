@@ -517,7 +517,6 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
   | Let (_idents, _, e) ->
     raise (Except.TypeError [Text "Let expressions cannot be unused!"; Except.codespan_local e.span])
   | Join (e1, e2) ->
-    Printf.eprintf "Processing join expression\n";
     (
       match e1.d with
       | Let (["_"], dtype, inner_e) ->
@@ -535,7 +534,6 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
         let lt = Typing.lifetime_intersect graph td1.lt td.lt in
         {td with lt} (* forcing the bound value to be awaited *)
       | Let ([ident], dtype, inner_e) ->
-          Printf.eprintf "Processing let binding for %s\n" ident;
           let td1 = visit_expr graph ci ctx inner_e in
           let err_string = DTypeCheck.fmt_let_binding ident dtype td1.dtype in
           check_dtype err_string dtype td1.dtype e1.span ci.file_name ci.weak_typecasts ci.typedefs ci.macro_defs;
@@ -559,7 +557,6 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
         {td with lt} (* forcing the bound value to be awaited *)
     )
   | Wait (e1, e2) ->
-    Printf.eprintf "Processing wait expression e1 : %s | e2 : %s\n" (string_of_expr e1.d) (string_of_expr e2.d);
     (
       match e1.d with
       | Let (["_"], dtype, inner_e) ->
