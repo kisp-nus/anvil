@@ -4,7 +4,7 @@
     [trunc] specifies the truncation: [0] for no truncation, positive for truncating at the start,
     and negative for truncating to the end (keeping [trunc] lines).
  *)
-let string_of_code_span ?(indent = 2) ?(trunc = 0) filename span =
+let string_of_code_span ?(indent = 2) ?(trunc = 0) filename (span: Lang.code_span) =
   let repeat_s s times = Seq.repeat s |> Seq.take times |> List.of_seq |> String.concat "" in
   let open Lang in
   let indent_s = repeat_s " " indent in

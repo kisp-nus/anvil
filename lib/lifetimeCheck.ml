@@ -33,9 +33,9 @@ let check_linear (config : Config.compile_config) lookup_message (g : event_grap
         | PutShared (_, _, _td) ->
           ()
         | ImmediateRecv msg ->
-          add_msg msg ev ({d = {ty = Recv msg; until = ev}; span = ac_span.span})
+          add_msg msg ev ({d = {ty = Recv msg; until = ev}; def_span = ac_span.def_span; action_event = ac_span.action_event; span = ac_span.span})
         | ImmediateSend (msg, td) ->
-          add_msg msg ev ({d = {ty = Send (msg, td); until = ev}; span = ac_span.span})
+          add_msg msg ev ({d = {ty = Send (msg, td); until = ev}; def_span = ac_span.def_span; action_event = ac_span.action_event; span = ac_span.span})
           (* add_reg_ops_td ev td *)
       ) ev.actions;
       List.iter (fun sa_span ->
@@ -473,11 +473,11 @@ let lifetime_check (config : Config.compile_config) (ci : cunit_info) (g : event
         match ac_span.d with
         | ImmediateSend (msg', td) ->
           if (msg_ident msg') = msg then
-            Some {d = {until = ev; ty = Send (msg', td)}; span = ac_span.span }
+            Some {d = {until = ev; ty = Send (msg', td)}; def_span = ac_span.def_span; action_event = ac_span.action_event; span = ac_span.span }
           else None
         | ImmediateRecv msg' ->
           if (msg_ident msg') = msg then
-            Some {d = {until = ev; ty = Recv msg'}; span = ac_span.span }
+            Some {d = {until = ev; ty = Recv msg'}; def_span = ac_span.def_span; action_event = ac_span.action_event; span = ac_span.span }
           else None
         | _ -> None
       ) ev.actions in

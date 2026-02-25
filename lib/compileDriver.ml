@@ -162,7 +162,7 @@ let compile out config =
     let visited_extern_files = ref Utils.StringSet.empty in
     let open Lang in
     List.iter (fun (file_name, cunit) ->
-      List.iter (fun {is_extern; file_name = imp_file_name} ->
+      List.iter (fun {is_extern; file_name = imp_file_name; span = _} ->
         if is_extern then
           let imp_file_name_canonical = canonicalise_file_name file_name imp_file_name in
           if Utils.StringSet.mem imp_file_name_canonical !visited_extern_files |> not then (

@@ -7,6 +7,13 @@ type code_span = {
   ed : Lexing.position; (** end of the span *)
 }
 
+(** A span of the original definition of a segment of code. *)
+type def_span = {
+  st : Lexing.position; (** start of the span *)
+  ed : Lexing.position; (** end of the span *)
+  cunit : string option; (** the cunit filename in which the definition is located; if omitted, implies self *)
+}
+
 (** A dummy code span that does not represent any valid span. *)
 let code_span_dummy = { st = Lexing.dummy_pos; ed = Lexing.dummy_pos }
 
@@ -17,13 +24,16 @@ type identifier = string
 (** A node in AST. Containing the data plus the code span info. *)
 type 'a ast_node = {
   span : code_span;
+  mutable def_span : def_span list; (* the definitions associated with this node (if applicable) *)
+  mutable action_event : (int * int * int option) option; (** opt (thread id, event id, sustained-till-event id) *)
+    (* if applicable, denotes the event where this action is executed in, within the node's process *)
   d : 'a;
 }
 
 (** Construct an AST node with specified data and span. *)
-let ast_node_of_data st ed d = { span = {st; ed}; d }
-let tag_with_span s d = { span = s; d }
-let dummy_ast_node_of_data d = { span = code_span_dummy; d }
+let ast_node_of_data st ed d = { span = {st; ed}; def_span = []; action_event = None; d }
+let tag_with_span s d = { span = s; def_span = []; action_event = None; d }
+let dummy_ast_node_of_data d = { span = code_span_dummy; def_span = []; action_event = None; d }
 
 let data_of_ast_node n = n.d
 
@@ -36,6 +46,7 @@ type param_type =
 type param = {
   param_name : identifier;
   param_ty : param_type;
+  span : code_span;
 }
 
 (** This identifies a message type within the context of a process.
@@ -122,12 +133,14 @@ type endpoint_def = {
   used within this process? *)
   opp: identifier option; (** if the endpoint is created locally, the other endpoint associated
   with the same channel *)
-  num_instances : int option (** number of instances for arrayed channels *)
+  num_instances : int option; (** number of instances for arrayed channels *)
+  span: code_span;
 }
 
 type macro_def = {
   id: identifier;
   value : int;
+  span: code_span;
 }
 
 (** A type definition ([type name = body])*)
@@ -135,6 +148,7 @@ and type_def = {
   name: identifier;
   body: data_type;
   params: param list; (** list of parameters *)
+  span: code_span;
 }
 
 (** Unit type. Basically an empty tuple. *)
@@ -485,6 +499,7 @@ type proc_def = {
   args: endpoint_def ast_node list; (** endpoints passed from outside *)
   body: proc_def_body_maybe_extern; (** process body *)
   params: param list; (** compile-time parameters *)
+  span: code_span; (** code span of the process body *)
 }
 
 (** An import directive for importing code from other files. *)
@@ -492,16 +507,19 @@ type import_directive = {
   file_name : string;
   is_extern : bool; (** is this import external?
       Currently an external import means importing SystemVerilog code *)
+  span: code_span;
 }
 type typed_arg = {
   arg_name: identifier;
   arg_type: data_type option; (** type of the argument, if any *)
+  span: code_span;
 }
 
 type func_def =  {
   name: identifier;
   args: typed_arg list;
   body: expr_node;
+  span: code_span;
 }
 (** A channel class definition, which is a set of message types. *)
 

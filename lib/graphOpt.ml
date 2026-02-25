@@ -456,8 +456,8 @@ module CombSimplPass = struct
         let actions = (
           List.map (fun sa_span ->
             match sa_span.d.ty with
-            | Send (msg, td) -> { d = ImmediateSend (msg, td); span = sa_span.span }
-            | Recv msg -> { d = ImmediateRecv msg; span = sa_span.span }
+            | Send (msg, td) -> { d = ImmediateSend (msg, td); def_span = sa_span.def_span; action_event = sa_span.action_event; span = sa_span.span }
+            | Recv msg -> { d = ImmediateRecv msg; def_span = sa_span.def_span; action_event = sa_span.action_event; span = sa_span.span }
           ) immediate_sa
         ) @ actions in
         if to_keep.(old_id) then (
