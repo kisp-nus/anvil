@@ -170,12 +170,12 @@ and event_graph = {
   thread_id : int; (** unique identifier of the looping thread *)
   mutable events : event list;
   mutable wires : WireCollection.t;
-  channels : Lang.channel_def list; (** all channel definitions.
+  channels : Lang.channel_def Lang.ast_node list; (** all channel definitions.
           Note these do not include the channels passed from outside the process *)
   messages : MessageCollection.t; (** all messages referenceable from within the process,
             including those through channels passed from outside*)
   spawns : Lang.spawn_def Lang.ast_node list;
-  regs: Lang.reg_def Utils.string_map;
+  regs: Lang.reg_def Lang.ast_node Utils.string_map;
   mutable last_event_id: int;
   thread_codespan : Lang.code_span;
   mutable is_general_recursive : bool; (** is this a general recursive graph? *)

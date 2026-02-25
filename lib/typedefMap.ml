@@ -30,11 +30,11 @@ let rec data_type_size (type_defs : t) (macro_defs : macro_def list) (dtype : da
       in
       (data_type_size type_defs macro_defs dtype') * n_concrete
   | `Named (type_name, params) ->
-      let type_def = match Utils.StringMap.find_opt type_name type_defs with
+      let type_def_ast = match Utils.StringMap.find_opt type_name type_defs with
       | Some type_def -> type_def
       | None -> failwith("Unknown Datatype: "^type_name)
       in
-      ParamConcretise.concretise_dtype type_def.params params type_def.body |> data_type_size type_defs macro_defs
+      ParamConcretise.concretise_dtype type_def_ast.params params type_def_ast.body |> data_type_size type_defs macro_defs
   | `Variant vlist as var ->
       let mx_data_size = List.fold_left (fun m n -> max m (
         let inner_dtype_op = snd n in

@@ -276,10 +276,10 @@ let codegen_post_declare printer (graphs : event_graph_collection) (g : event_gr
 let codegen_regs printer (graphs : event_graph_collection) (g : event_graph) =
   Utils.StringMap.iter
     (
-      fun _ (r : reg_def) ->
+      fun _ (r : reg_def ast_node) ->
         let open CodegenFormat in
-        Printf.sprintf "%s %s;" (format_dtype graphs.typedefs graphs.macro_defs r.d_type)
-          (format_regname_current r.name) |>
+        Printf.sprintf "%s %s;" (format_dtype graphs.typedefs graphs.macro_defs r.d.d_type)
+          (format_regname_current r.d.name) |>
           CodegenPrinter.print_line printer
     )
     g.regs
