@@ -8,6 +8,7 @@ type compile_config = {
   just_check : bool;
   two_round_graph: bool;
   json_output: bool;
+  ast_output: bool;
   input_filenames: string list;
 }
 
@@ -19,6 +20,7 @@ let parse_args () : compile_config =
   and opt_level = ref 2
   and two_round_graph = ref false
   and json_output = ref false
+  and ast_output = ref false
   and input_filenames = ref []
   and output_filename = ref None
   and just_check = ref false in
@@ -36,10 +38,11 @@ let parse_args () : compile_config =
       ("-o", Arg.String (fun s -> output_filename := Some s), "Set output filename");
       ("-just-check", Arg.Set just_check, "Only typecheck and validate the input files");
       ("-two-round", Arg.Set two_round_graph, "Enable codegen of logic for two rounds");
-      ("-json", Arg.Set json_output, "Output compilation results in JSON format")
+      ("-json", Arg.Set json_output, "Output compilation results in JSON format");
+      ("-ast", Arg.Set ast_output, "Output only the AST with compiler annotations (requires -json)")
     ]
     add_input_filename
-    "anvil [-stdin] [-verbose] [-disable-lt-checks] [-O <opt-level>] [-two-round] [-json] [-strict-dtc] <file1> [<file2>] ...";
+    "anvil [-stdin] [-verbose] [-disable-lt-checks] [-O <opt-level>] [-two-round] [-json] [-ast] [-strict-dtc] <file1> [<file2>] ...";
   {
     verbose = !verbose;
     stdin = !stdin;
@@ -48,6 +51,7 @@ let parse_args () : compile_config =
     opt_level = !opt_level;
     two_round_graph = !two_round_graph;
     json_output = !json_output;
+    ast_output = !ast_output;
     input_filenames = !input_filenames;
     output_filename = !output_filename;
     just_check = !just_check;

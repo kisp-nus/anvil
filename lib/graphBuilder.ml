@@ -1261,6 +1261,7 @@ let build (config : Config.compile_config) sched module_name param_values (cunit
   } in
   let graphs = List.map (build_proc config sched module_name param_values ci ) cunit.procs in
   {
+    cunit_file_name = cunit.cunit_file_name;
     event_graphs = graphs;
     typedefs;
     macro_defs;

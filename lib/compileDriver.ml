@@ -68,7 +68,12 @@ let rec parse_recursive cunits parsed_files (config : Config.compile_config) fil
     ) cunit.imports
   )
 
-let compile out config =
+
+(* Compilation steps *)
+
+
+(** Parses the input files and returns a list of compilation units. Raises CompileError if any error is encountered. *)
+let _parse config =
   let open Config in
   let toplevel_filename = if config.stdin && List.length config.input_filenames = 0
     then "-"
@@ -82,12 +87,17 @@ let compile out config =
         (Except.Text "Type error:")::msg
           |> raise_compile_error None
   );
+  !cunits
+
+
+(** Performs type and lifetime checks, and returns the graph collection queue *)
+let _check config cunits =
   (* collect all channel class and type definitions *)
-  let all_channel_classes = List.concat_map (fun (_, cunit) -> let open Lang in cunit.channel_classes) !cunits in
-  let all_type_defs = List.concat_map (fun (_, cunit) -> let open Lang in cunit.type_defs) !cunits in
-  let all_procs = List.concat_map (fun (file_name, cunit) -> let open Lang in List.map (fun p -> (file_name, p)) cunit.procs) !cunits in
-  let all_func_defs = List.concat_map (fun (_, cunit) -> let open Lang in cunit.func_defs) !cunits in
-  let all_macro_defs = List.concat_map (fun (_, cunit) -> let open Lang in cunit.macro_defs) !cunits in
+  let all_channel_classes = List.concat_map (fun (_, cunit) -> let open Lang in cunit.channel_classes) cunits in
+  let all_type_defs = List.concat_map (fun (_, cunit) -> let open Lang in cunit.type_defs) cunits in
+  let all_procs = List.concat_map (fun (file_name, cunit) -> let open Lang in List.map (fun p -> (file_name, p)) cunit.procs) cunits in
+  let all_func_defs = List.concat_map (fun (_, cunit) -> let open Lang in cunit.func_defs) cunits in
+  let all_macro_defs = List.concat_map (fun (_, cunit) -> let open Lang in cunit.macro_defs) cunits in
   let proc_map = List.map (fun (file_name, proc) -> (let open Lang in (proc:proc_def).name, (proc, file_name))) all_procs
     |> Utils.StringMap.of_list in
   let sched = BuildScheduler.create () in
@@ -153,9 +163,11 @@ let compile out config =
       )
     )
   done;
-  if config.just_check then
-    ()
-  else begin
+  graph_collection_queue
+
+(** Performs code generation from checked results and graph *)
+let _codegen config out cunits graph_collection_queue =
+  begin
     (* generate preamble *)
     Codegen.generate_preamble out;
     (* pull code from imported external files *)
@@ -171,7 +183,7 @@ let compile out config =
             with Sys_error msg -> raise_compile_error (Some file_name) [Except.Text msg]
           )
       ) cunit.imports
-    ) !cunits;
+    ) cunits;
     (* generate the code from event graphs *)
     let all_collections = Queue.to_seq graph_collection_queue |> List.of_seq in
     let all_event_graphs = List.concat_map (fun collection -> let open EventGraph in collection.event_graphs) all_collections in
@@ -179,4 +191,43 @@ let compile out config =
       Codegen.generate out config
        {graphs with EventGraph.external_event_graphs = all_event_graphs}) all_collections
   end
+
+
+
+(* Module methods *)
+
+(** Parses the input files and returns the resulting list of compilation units,
+    and optionally the graph collections if parsing and checking succeed or any partial compile errors. *)
+let parse config =
+  let cunits = _parse config in
+
+  let graph_collections, error =
+    let check_result, error =
+      try Some (_check config cunits), None
+      with | CompileError x -> None, Some (CompileError x)
+    in
+    let assoc_list = match check_result with
+      | Some gc_queue ->
+          let gc_list = Queue.to_seq gc_queue |> List.of_seq in
+          let gcol_to_lookup (gcol : EventGraph.event_graph_collection) =
+            match gcol.cunit_file_name with
+              | Some fname -> Some (fname, gcol)
+              | None -> None
+          in
+          List.filter_map gcol_to_lookup gc_list
+      | None -> []
+    in
+    assoc_list, error
+  in
+
+  cunits, graph_collections, error
+
+(** Performs the end-to-end compilation process, including parsing, checking, and code generation,
+    based on the config, and outputs the generated code to the given output channel *)
+let compile out config =
+  let cunits = _parse config in
+  let graph_collection_queue = _check config cunits in
+  if config.just_check then ()
+  else _codegen config out cunits graph_collection_queue
+
 

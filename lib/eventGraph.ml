@@ -197,6 +197,7 @@ In addition to event graphs, it also includes the associated {{!typedefs}type de
 {{!channel_classes}channel class definitions}.
 *)
 type event_graph_collection = {
+  cunit_file_name : string option;
   event_graphs : proc_graph list;
   typedefs : TypedefMap.t;
   macro_defs : Lang.macro_def list;
