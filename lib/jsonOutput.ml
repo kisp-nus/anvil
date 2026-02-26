@@ -120,7 +120,7 @@ let ast_output cunits gcols errors =
   in
   let ast_json_list = List.map to_yojson cunits in
   let ast = `List ast_json_list in
-  { success = true; errors; output = None; ast = Some ast }
+  { success = List.is_empty errors; errors; output = None; ast = Some ast }
 
 let failure_output errors =
   { success = false; errors; output = None; ast = None }
