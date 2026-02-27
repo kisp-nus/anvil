@@ -557,7 +557,7 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
       | Let ([ident],dtype, _) ->
           let err_string = DTypeCheck.fmt_let_binding ident dtype td1.dtype in
           check_dtype err_string dtype td1.dtype e1.span ci.file_name ci.weak_typecasts ci.typedefs ci.macro_defs;
-          let ctx' = BuildContext.add_binding ctx ident td1 (AstAnnotator.to_def_span e.span (Some ci.file_name)) in
+          let ctx' = BuildContext.add_binding ctx ident td1 (AstAnnotator.to_def_span e1.span (Some ci.file_name)) in
           let td = visit_expr graph ci ctx' e2 in
           (* check if the binding is used *)
           let binding = Typing.context_lookup ctx'.typing_ctx ident |> Option.get in
@@ -591,7 +591,7 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
         check_dtype err_string dtype td1.dtype e.span ci.file_name ci.weak_typecasts ci.typedefs ci.macro_defs;
         (* add the binding to the context *)
         let ctx' = BuildContext.wait graph ctx td1.lt.live in
-        let ctx' = BuildContext.add_binding ctx' ident td1 (AstAnnotator.to_def_span e.span (Some ci.file_name)) in
+        let ctx' = BuildContext.add_binding ctx' ident td1 (AstAnnotator.to_def_span e1.span (Some ci.file_name)) in
         visit_expr graph ci ctx' e2
       | Let _ -> raise (event_graph_error_default "Discarding expression results!" e.span)
       | _ ->
@@ -749,7 +749,7 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
       reg_borrows = [];
       dtype = stype.dtype;
     } in
-    let ctx_true = BuildContext.add_binding ctx_true_no_binding ident td_recv (AstAnnotator.to_def_span e.span (Some ci.file_name)) in
+    let ctx_true = BuildContext.add_binding ctx_true_no_binding ident td_recv (AstAnnotator.to_def_span e1.span (Some ci.file_name)) in
     let td1 = visit_expr graph ci ctx_true e1 in
     let (br_side_false, ctx_false) = BuildContext.branch_side graph ctx branch_info 1 in
     let td2 = visit_expr graph ci ctx_false e2 in
