@@ -1,16 +1,36 @@
 exception CompileError of Except.error_message
 
-let raise_compile_error file_name msg =
-  let open Except in
-  let msg = match file_name with
-  | Some file_name -> List.map (fun frag ->
-      match frag with
-      | Codespan (None, codespan) -> Codespan (Some file_name, codespan)
-      | _ -> frag
-    ) msg
-  | None -> msg
+let remap_missing_filename_in_fragment file_name fragments =
+  let mapper = function
+    | Except.Codespan (None, codespan) -> Except.Codespan (file_name, codespan)
+    | other -> other
   in
+  match file_name with
+  | Some _ -> List.map mapper fragments
+  | None -> fragments
+
+let convert_intermediate_anvil_errors (e: exn) file_name =
+  let open Except in
+  let mapped = remap_missing_filename_in_fragment file_name in
+  match e with
+  | EventGraph.LifetimeCheckError msg ->
+      CompileError ((Text "Borrow checking failed:")::mapped msg)
+  | EventGraph.EventGraphError msg ->
+      CompileError ((Text "Event graph error:")::mapped msg)
+  | Except.TypeError msg ->
+      CompileError ((Text "Type error:")::mapped msg)
+  | Except.UnimplementedError msg ->
+      CompileError ((Text "Unimplemented error:")::mapped msg)
+  | Except.UnknownError msg ->
+      CompileError ((Text "Unknown error:")::mapped msg)
+  | Except.CodegenError msg ->
+      CompileError ((Text "Code generation error:")::mapped msg)
+  | _ -> e
+
+let raise_compile_error file_name msg =
+  let msg = remap_missing_filename_in_fragment file_name msg in
   raise (CompileError msg)
+
 
 let canonicalise_file_name file_origin file_name =
   if Filename.is_relative file_name then
@@ -183,23 +203,7 @@ let _check config cunits =
             with
             | res -> res
             | exception exc ->
-              (
-                let msg =
-                  match exc with
-                  | EventGraph.LifetimeCheckError msg ->
-                    (Text "Borrow checking failed:")::msg
-                  | Except.TypeError msg ->
-                    (Text "Type error:")::msg
-                  | Except.UnimplementedError msg ->
-                    (Text "Unimplemented error:")::msg
-                  | EventGraph.EventGraphError msg ->
-                    (Text "Event graph error:")::msg
-                  | Except.UnknownError msg ->
-                    (Text "Unknown error:")::msg
-                  | _ -> raise exc
-                in
-                raise_compile_error (Some file_name) msg
-              )
+                raise (convert_intermediate_anvil_errors exc (Some file_name))
           in
           Queue.add graph_collection graph_collection_queue
       )
@@ -243,11 +247,19 @@ let _codegen config out cunits graph_collection_queue =
 let parse config =
   let cunits = _parse config in
 
-  let graph_collections, error =
-    let check_result, error =
-      try Some (_check config cunits), None
-      with | CompileError x -> None, Some (CompileError x)
+  let graph_collections =
+
+    ErrorCollector.collect_errors := true;
+
+    let check_result =
+      try Some (_check config cunits)
+      with | CompileError x ->
+        ErrorCollector.push_new_error (CompileError x);
+        None
     in
+
+    ErrorCollector.collect_errors := false;
+
     let assoc_list = match check_result with
       | Some gc_queue ->
           let gc_list = Queue.to_seq gc_queue |> List.of_seq in
@@ -259,10 +271,23 @@ let parse config =
           List.filter_map gcol_to_lookup gc_list
       | None -> []
     in
-    assoc_list, error
+    assoc_list
   in
 
-  cunits, graph_collections, error
+  ErrorCollector.dedup_collected_errors ();
+
+  let collected_errors = ErrorCollector.get_collected_errors () in
+
+  ErrorCollector.clear_collected_errors ();
+
+  let mapped e =
+    match convert_intermediate_anvil_errors e None with
+    | CompileError msg -> CompileError msg
+    | e -> e
+  in
+
+  cunits, graph_collections, List.map mapped collected_errors
+
 
 (** Performs the end-to-end compilation process, including parsing, checking, and code generation,
     based on the config, and outputs the generated code to the given output channel *)

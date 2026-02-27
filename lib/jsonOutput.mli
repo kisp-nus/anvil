@@ -31,7 +31,7 @@ type json_output = {
 }
 
 (** Converts an error message to JSON errors *)
-val error_message_to_json_errors : string -> Except.error_message -> json_error list
+val error_message_to_json_error : string -> Except.error_message -> json_error
 
 (** Converts a JSON output to string *)
 val json_output_to_string : json_output -> string

@@ -1,11 +1,12 @@
 open EventGraph
 open EventGraphOps
 open Lang
+open ErrorCollector
 
 let unwrap_or_err err_msg err_span opt =
   match opt with
   | Some d -> d
-  | None -> raise (event_graph_error_default err_msg err_span)
+  | None -> raise_fatal (event_graph_error_default err_msg err_span)
 
 module Typing = struct
   type binding = {
@@ -449,7 +450,8 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
         | Some a, Some b_def ->
           AstAnnotator.attach_def_span e a.binding_def_span;
           AstAnnotator.attach_def_from_top_level_macro e b_def;
-          raise (event_graph_error_default ("Conflicting Identifier " ^ ident ^ " declarations found") e.span)
+          raise (event_graph_error_default ("Conflicting Identifier " ^ ident ^ " declarations found") e.span);
+          Typing.const_data graph None (unit_dtype) ctx.current (* dummy return *)
         | Some binding, None ->
           AstAnnotator.attach_def_span e binding.binding_def_span;
           Typing.use_binding binding |> Typing.sync_data graph ctx.current
@@ -566,7 +568,9 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
             raise (event_graph_error_default "Value is potentially not awaited!" e1.span)
           );
           td
-      | Let _ -> raise (event_graph_error_default "Discarding expression results!" e.span)
+      | Let _ ->
+        raise (event_graph_error_default "Discarding expression results!" e.span);
+        Typing.const_data graph None (unit_dtype) ctx.current (* dummy return *)
       | _ ->
         let td = visit_expr graph ci ctx e2 in
         let lt = Typing.lifetime_intersect graph td1.lt td.lt in
@@ -593,7 +597,9 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
         let ctx' = BuildContext.wait graph ctx td1.lt.live in
         let ctx' = BuildContext.add_binding ctx' ident td1 (AstAnnotator.to_def_span e1.span (Some ci.file_name)) in
         visit_expr graph ci ctx' e2
-      | Let _ -> raise (event_graph_error_default "Discarding expression results!" e.span)
+      | Let _ ->
+          raise (event_graph_error_default "Discarding expression results!" e.span);
+          Typing.const_data graph None (unit_dtype) ctx.current (* dummy return *)
       | _ ->
         let ctx' = BuildContext.wait graph ctx td1.lt.live in
         visit_expr graph ci ctx' e2
@@ -654,7 +660,9 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
         let (wires', w) = WireCollection.add_switch graph.thread_id ci.typedefs [(w1, w2)] w3 graph.wires in
         graph.wires <- wires';
         {w = Some w; lt; reg_borrows = reg_borrows'; dtype = td2.dtype}
-      | _ -> raise (event_graph_error_default "Invalid if expression!" e.span)
+      | _ ->
+        raise (event_graph_error_default "Invalid if expression!" e.span);
+        Typing.const_data graph None (unit_dtype) ctx.current (* dummy return *)
     )
   | TrySend (send_pack, e1, e2) ->
     (* data to send *)
@@ -713,7 +721,9 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
         let (wires', w) = WireCollection.add_switch graph.thread_id ci.typedefs [(w_cond, w1)] w2 graph.wires in
         graph.wires <- wires';
         {w = Some w; lt; reg_borrows = reg_borrows'; dtype = td2.dtype}
-      | _ -> raise (event_graph_error_default "Invalid try send expression!" e.span)
+      | _ ->
+          raise (event_graph_error_default "Invalid try send expression!" e.span);
+        Typing.const_data graph None (unit_dtype) ctx.current (* dummy return *)
     )
   | TryRecv (ident, recv_pack, e1, e2) ->
     let wires, w_cond = WireCollection.add_msg_valid_port graph.thread_id ci.typedefs recv_pack.recv_msg_spec graph.wires in
@@ -784,7 +794,9 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
         let (wires', w) = WireCollection.add_switch graph.thread_id ci.typedefs [(w_cond, w1)] w2 graph.wires in
         graph.wires <- wires';
         {w = Some w; lt; reg_borrows = reg_borrows'; dtype = td2.dtype}
-      | _ -> raise (event_graph_error_default "Invalid try recv expression!" e.span)
+      | _ ->
+        raise (event_graph_error_default "Invalid try recv expression!" e.span);
+        Typing.const_data graph None (unit_dtype) ctx.current (* dummy return *)
     )
 
   | Match (match_v, match_arms) ->
@@ -852,12 +864,14 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
           {w = None; lt; reg_borrows = reg_borrows'; dtype = unit_dtype}
         else (
           let (wires', w) = WireCollection.add_cases graph.thread_id ci.typedefs w_v
-            (List.map2 (fun td_pat (_, _, td_val) -> (Option.get td_pat.w, Option.get td_val.w)) td_pats branches) (match td_default.w with | Some w -> w | None -> raise (event_graph_error_default "Invalid match expression (exactly one default case expected)!" e.span))
+            (List.map2 (fun td_pat (_, _, td_val) -> (Option.get td_pat.w, Option.get td_val.w)) td_pats branches) (match td_default.w with | Some w -> w | None -> raise_fatal (event_graph_error_default "Invalid match expression (exactly one default case expected)!" e.span))
             graph.wires in
           graph.wires <- wires';
           {w = Some w; lt; reg_borrows = reg_borrows'; dtype = td_default.dtype}
         )
-      | _ -> raise @@ event_graph_error_default "Invalid match expression (atleast one default case expected)!" e.span
+      | _ ->
+          raise @@ event_graph_error_default "Invalid match expression (atleast one default case expected)!" e.span;
+          Typing.const_data graph None (unit_dtype) ctx.current (* dummy return *)
     )
   | Cast (e', dtype) ->
     let td = visit_expr graph ci ctx e' in
@@ -1091,9 +1105,13 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
             let (wires', w) = WireCollection.add_concat graph.thread_id ci.typedefs ci.macro_defs ws graph.wires in
             graph.wires <- wires';
             List.map snd tds |> Typing.merged_data graph (Some w) (`Named (record_ty_name, [])) ctx.current
-          | _ -> raise (event_graph_error_default "Invalid record type value!" e.span)
+          | _ ->
+            raise (event_graph_error_default "Invalid record type value!" e.span);
+            Typing.const_data graph None (unit_dtype) ctx.current (* dummy return *)
         )
-      | _ -> raise (event_graph_error_default "Invalid record type name!" e.span)
+      | _ ->
+          raise (event_graph_error_default "Invalid record type name!" e.span);
+          Typing.const_data graph None (unit_dtype) ctx.current (* dummy return *)
     )
   | Record (record_ty_name, field_exprs, Some field_base) ->
       (
@@ -1111,7 +1129,7 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
           match TypedefMap.data_type_indirect ci.typedefs ci.macro_defs (`Named (record_ty_name, [])) field_ident with
           | None -> 
             let err_string = Printf.sprintf "In record update: Invalid field %s for record type %s" field_ident record_ty_name in
-             raise (event_graph_error_default err_string e.span)
+             raise_fatal (event_graph_error_default err_string e.span)
           | Some (offset_le, len, _dtype) -> (offset_le, len, Option.get td.w)
         ) tds in
       let (wires', w) = WireCollection.add_update graph.thread_id ci.typedefs (Option.get td_base.w) updates graph.wires in
@@ -1163,9 +1181,13 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
             end in
             graph.wires <- wires';
             Typing.const_data graph (Some new_w)  (`Named (cstr_spec.variant_ty_name, [])) ctx.current
-          | _ -> raise (event_graph_error_default "Invalid variant construct expression!" e.span)
+          | _ ->
+            raise (event_graph_error_default "Invalid variant construct expression!" e.span);
+            Typing.const_data graph None (unit_dtype) ctx.current (* dummy return *)
         )
-      | _ -> raise (event_graph_error_default "Invalid variant type name!" e.span)
+      | _ ->
+        raise (event_graph_error_default "Invalid variant type name!" e.span);
+        Typing.const_data graph None (unit_dtype) ctx.current (* dummy return *)
     )
   | SharedAssign (id, value_expr) ->
     let shared_info = Hashtbl.find_opt ctx.shared_vars_info id
@@ -1195,9 +1217,9 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
       let action = PutShared (id, shared_info, value_td) |> tag_with_span e.span in
       ctx.current.actions <- action::ctx.current.actions;
       AstAnnotator.attach_event action ctx.current None;
-      Typing.const_data graph None (unit_dtype) ctx.current
     else
-      raise (event_graph_error_default "Shared variable assigned in wrong thread" e.span)
+      raise (event_graph_error_default "Shared variable assigned in wrong thread" e.span);
+    Typing.const_data graph None (unit_dtype) ctx.current
   | List li ->
     let tds = List.map (visit_expr graph ci ctx) li in
     let ws = List.map (fun td -> unwrap_or_err "Invalid wires!" e.span td.w) tds in
@@ -1209,7 +1231,9 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
   | Recurse ->
     ctx.current.is_recurse <- true;
     Typing.const_data graph None unit_dtype ctx.current
-  | Tuple _ -> raise (event_graph_error_default "Unimplemented expression!" e.span)
+  | Tuple _ ->
+    raise (event_graph_error_default "Unimplemented expression!" e.span);
+    Typing.const_data graph None unit_dtype ctx.current (* dummy return *)
 
 
 module IntHashTbl = Hashtbl.Make(Int)
@@ -1229,7 +1253,7 @@ let recurse_unfold_for_checks ci shared_vars_info graph expr_node =
   if recurse_dist = 0 then
     raise (event_graph_error_default "Recurse delay must be greater than 0!" expr_node.span);
   (* the number of times to unfold is minimum for the recurse time to first pass the end event *)
-  let unfold_times = full_dist / recurse_dist in
+  let unfold_times = full_dist / (max recurse_dist 1) in
   let cur_expr = ref expr_node in
   for _ = 1 to unfold_times do
     cur_expr := recurse_unfold !cur_expr expr_node
@@ -1247,7 +1271,7 @@ let build_proc (config : Config.compile_config) sched module_name param_values
   in
   let macro_defs_extended =
     if List.length param_values <> List.length proc.params then
-      raise (Except.TypeError [Text (Printf.sprintf "Expected %d parameters but got %d in %s instantation"
+      raise_fatal (Except.TypeError [Text (Printf.sprintf "Expected %d parameters but got %d in %s instantation"
         (List.length proc.params) (List.length param_values) module_name)])
     else
       List.fold_left2 (fun acc (p : Lang.param) (pval : param_value) ->

@@ -1,6 +1,7 @@
 open Lang
 open EventGraph
 open GraphAnalysis
+open ErrorCollector
 
 let string_of_lt (lt : lifetime) : string =
   String.concat "" (List.map (fun s ->
@@ -130,8 +131,8 @@ let event_pat_rel2 events lookup_message ev_pat1 ev_pat2 =
       | true -> (g, offset)
 
       | false -> match ((lookup_message m): message_def option) with
-        | Some def -> raise (LifetimeCheckError [Text "Negative Offset Unsupported right now"; Except.codespan_local def.span])
-        | None -> raise (LifetimeCheckError [Text (Printf.sprintf "Message_def_not_found %s" (string_of_msg_spec m)); Except.codespan_local Lang.code_span_dummy])
+        | Some def -> raise_fatal (LifetimeCheckError [Text "Negative Offset Unsupported right now"; Except.codespan_local def.span])
+        | None -> raise_fatal (LifetimeCheckError [Text (Printf.sprintf "Message_def_not_found %s" (string_of_msg_spec m)); Except.codespan_local Lang.code_span_dummy])
   in
   match ev_pat1 with
   | [spat1] -> (

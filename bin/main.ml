@@ -13,11 +13,15 @@ let compile_with_json_output config =
     let temp_file = Filename.temp_file "anvil_output" ".sv" in
     try
       if config.ast_output then
-        let cunits, gcols, error = Anvil.CompileDriver.parse config in
+        let cunits, gcols, errors = Anvil.CompileDriver.parse config in
         let json_errors =
-          match error with
-          | Some Anvil.CompileDriver.CompileError msg -> Anvil.JsonOutput.error_message_to_json_errors "error" msg
-          | _ -> []
+          let convert error_msg = Anvil.JsonOutput.error_message_to_json_error "error" error_msg in
+          let compile_error_to_json_error (e: exn) =
+            match e with
+            | Anvil.CompileDriver.CompileError msg -> convert msg
+            | e -> convert [Anvil.Except.Text ("Unhandled error detected: " ^ (Printexc.to_string e))]
+           in
+          List.map compile_error_to_json_error errors
         in
         let json_result = Anvil.JsonOutput.ast_output cunits gcols json_errors in
         print_endline (Anvil.JsonOutput.json_output_to_string json_result);
@@ -40,8 +44,8 @@ let compile_with_json_output config =
     with
     | Anvil.CompileDriver.CompileError msg ->
       (try Sys.remove temp_file with _ -> ());
-      let json_errors = Anvil.JsonOutput.error_message_to_json_errors "error" msg in
-      let json_result = Anvil.JsonOutput.failure_output json_errors in
+      let json_error = Anvil.JsonOutput.error_message_to_json_error "error" msg in
+      let json_result = Anvil.JsonOutput.failure_output [json_error] in
       print_endline (Anvil.JsonOutput.json_output_to_string json_result);
       exit 1
   end
