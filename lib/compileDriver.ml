@@ -87,14 +87,13 @@ let _parse config =
         (Except.Text "Type error:")::msg
           |> raise_compile_error None
   );
+  (* attach the compilation unit filename to all top-level definitions for definition lookup later *)
   List.iter (fun (_, cunit) -> AstAnnotator.attach_def_cunit_fname cunit) !cunits;
   !cunits
 
 
 (** Performs type and lifetime checks, and returns the graph collection queue *)
 let _check config cunits =
-
-  (* attach the compilation unit filename to all top-level definitions for definition lookup later *)
 
   (* collect all channel class and type definitions *)
   let all_channel_classes = List.concat_map (fun (_, cunit) -> let open Lang in cunit.channel_classes) cunits in
