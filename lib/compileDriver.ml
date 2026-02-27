@@ -87,11 +87,15 @@ let _parse config =
         (Except.Text "Type error:")::msg
           |> raise_compile_error None
   );
+  List.iter (fun (_, cunit) -> AstAnnotator.attach_def_cunit_fname cunit) !cunits;
   !cunits
 
 
 (** Performs type and lifetime checks, and returns the graph collection queue *)
 let _check config cunits =
+
+  (* attach the compilation unit filename to all top-level definitions for definition lookup later *)
+
   (* collect all channel class and type definitions *)
   let all_channel_classes = List.concat_map (fun (_, cunit) -> let open Lang in cunit.channel_classes) cunits in
   let all_type_defs = List.concat_map (fun (_, cunit) -> let open Lang in cunit.type_defs) cunits in
@@ -101,6 +105,45 @@ let _check config cunits =
   let proc_map = List.map (fun (file_name, proc) -> (let open Lang in (proc:proc_def).name, (proc, file_name))) all_procs
     |> Utils.StringMap.of_list in
   let sched = BuildScheduler.create () in
+
+  (* annotate top-level constructs that don't need graph traversal with their definitions *)
+  (
+    let proc_lookup_table = List.map (fun ((_, proc): string * Lang.proc_def) -> (proc.name, proc)) all_procs in
+
+    let annotate_proc_def (proc: Lang.proc_def) =
+      (* annotate endpoint defs with their channel class definitions *)
+      let annotate_ep_chan_cls_def (ep: Lang.endpoint_def Lang.ast_node) =
+        match MessageCollection.lookup_channel_class all_channel_classes ep.d.channel_class with
+        | Some cc -> AstAnnotator.attach_def_from_top_level_channel_class ep cc
+        | _ -> ()
+      in
+      List.iter (fun ep -> annotate_ep_chan_cls_def ep) proc.args;
+
+      (* annotate channel defs with their channel class definitions *)
+      let annotate_chan_chan_cls_def (chan: Lang.channel_def Lang.ast_node) =
+        match MessageCollection.lookup_channel_class all_channel_classes chan.d.channel_class with
+        | Some cc -> AstAnnotator.attach_def_from_top_level_channel_class chan cc
+        | _ -> ()
+      in
+      match proc.body with
+      | Native body -> List.iter (fun chan -> annotate_chan_chan_cls_def chan) body.channels
+      | Extern _ -> ();
+
+      (* annotate spawn defs with their proc definitions *)
+      (* TODO: This doesn't seem to work *)
+      let annotate_spawn_proc_def (spawn: Lang.spawn_def Lang.ast_node) =
+        match List.assoc_opt spawn.d.proc proc_lookup_table with
+        | Some proc_def -> AstAnnotator.attach_def_from_top_level_proc spawn proc_def
+        | None -> AstAnnotator.attach_def_from_code_span spawn spawn.span None
+      in
+      match proc.body with
+      | Native body -> List.iter (fun spawn -> annotate_spawn_proc_def spawn) body.spawns
+      | Extern _ -> ();
+    in
+
+    List.iter (fun (_, proc) -> annotate_proc_def proc) all_procs;
+  );
+
   (* add processes that are concrete *)
   List.iter (fun (file_name, proc) ->
     let open Lang in

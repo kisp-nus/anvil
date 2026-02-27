@@ -40,7 +40,7 @@ let def_span_to_yojson (s: def_span) =
   if s.st = code_span_dummy.st && s.ed = code_span_dummy.ed then `Null else
   let open Lexing in
   assoc [
-    ("cunit", opt str s.cunit);
+    ("file_name", opt str s.cunit);
     ("start", assoc [
         ("line", int s.st.pos_lnum);
         ("col", int (s.st.pos_cnum - s.st.pos_bol))
@@ -234,7 +234,8 @@ let macro_def_to_yojson (m: macro_def) =
   kind "macro_def" [
     ("id", identifier_to_yojson m.id);
     ("value", int m.value);
-    ("span", code_span_to_yojson m.span)
+    ("span", code_span_to_yojson m.span);
+    ("file_name", opt str m.cunit_file_name);
   ]
 
 let type_def_to_yojson (t: type_def) =
@@ -242,7 +243,8 @@ let type_def_to_yojson (t: type_def) =
     ("name", identifier_to_yojson t.name);
     ("data_type", data_type_to_yojson t.body);
     ("params", list param_to_yojson t.params);
-    ("span", code_span_to_yojson t.span)
+    ("span", code_span_to_yojson t.span);
+    ("file_name", opt str t.cunit_file_name);
   ]
 
 
@@ -300,7 +302,8 @@ let channel_class_def_to_yojson (c: channel_class_def) =
     ("name", identifier_to_yojson c.name);
     ("messages", list message_def_to_yojson c.messages);
     ("params", list param_to_yojson c.params);
-    ("span", code_span_to_yojson c.span)
+    ("span", code_span_to_yojson c.span);
+    ("file_name", opt str c.cunit_file_name);
   ]
 
 let channel_visibility_to_yojson (v: channel_visibility) = match v with
@@ -599,10 +602,12 @@ let thread_to_yojson (x: expr_node * message_specifier option) = kind "thread" (
   match x with
   | (e, Some rst) -> [
     ("expr", expr_node_to_yojson e);
+    ("span", code_span_to_yojson e.span);
     ("rst", message_specifier_to_yojson rst)
   ]
   | (e, _) -> [
     ("expr", expr_node_to_yojson e);
+    ("span", code_span_to_yojson e.span);
     ("rst", `Null)
   ])
 
@@ -684,7 +689,8 @@ let proc_def_to_yojson (p: proc_def) =
     ("args", list (ast_node_to_yojson endpoint_def_to_yojson) p.args);
     ("body", proc_def_body_maybe_extern_to_yojson p.body);
     ("params", list param_to_yojson p.params);
-    ("span", code_span_to_yojson p.span)
+    ("span", code_span_to_yojson p.span);
+    ("file_name", opt str p.cunit_file_name);
   ]
 
 let import_directive_to_yojson (i: import_directive) =
@@ -706,7 +712,8 @@ let func_def_to_yojson (f: func_def) =
     ("name", identifier_to_yojson f.name);
     ("args", list typed_arg_to_yojson f.args);
     ("body", expr_node_to_yojson f.body);
-    ("span", code_span_to_yojson f.span)
+    ("span", code_span_to_yojson f.span);
+    ("file_name", opt str f.cunit_file_name);
   ]
 
 

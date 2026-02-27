@@ -400,6 +400,12 @@ let rec lvalue_info_of graph (ci:cunit_info) ctx (e:expr_node) lval =
       |> unwrap_or_err "Invalid lvalue indexing" span in
     let le_n = MaybeConst.add (binop_td_const Add) (binop_td_td Add) le' le
     in
+    (
+      let type_def = TypedefMap.type_def_name_resolve ci.typedefs dtype in
+      match type_def with
+      | Some type_def -> AstAnnotator.attach_def_from_top_level_type e type_def
+      | None -> ()
+    );
     {
       lval_range = {lval_info'.lval_range with subreg_range_interval = (le_n, len)};
       lval_dtype = dtype
@@ -411,6 +417,12 @@ let rec lvalue_info_of graph (ci:cunit_info) ctx (e:expr_node) lval =
       |> unwrap_or_err ("Invalid lvalue indirection through field " ^ fieldname) span in
     let le_n = MaybeConst.add_const le (binop_td_const Add) le'
     in
+    (
+      let type_def = TypedefMap.type_def_name_resolve ci.typedefs dtype in
+      match type_def with
+      | Some type_def -> AstAnnotator.attach_def_from_top_level_type e type_def
+      | None -> ()
+    );
     {
       lval_range = {lval_info'.lval_range with subreg_range_interval = (le_n, len)};
       lval_dtype = dtype
@@ -432,21 +444,21 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
     )
   | Identifier ident ->
       let ctx_val = Typing.context_lookup ctx.typing_ctx ident in
-      let macro_val = List.assoc_opt ident (List.map (fun (macro : macro_def) ->(macro.id, (macro.value, macro.span))) ci.macro_defs) in
+      let macro_val = List.assoc_opt ident (List.map (fun (macro : macro_def) ->(macro.id, macro)) ci.macro_defs) in
       (match ctx_val, macro_val with
-        | Some a, Some (_, b_span) ->
+        | Some a, Some b_def ->
           AstAnnotator.attach_def_span e a.binding_def_span;
-          AstAnnotator.attach_def_from_code_span e b_span (Some ci.file_name);
+          AstAnnotator.attach_def_from_top_level_macro e b_def;
           raise (event_graph_error_default ("Conflicting Identifier " ^ ident ^ " declarations found") e.span)
         | Some binding, None ->
           AstAnnotator.attach_def_span e binding.binding_def_span;
           Typing.use_binding binding |> Typing.sync_data graph ctx.current
-        | None, Some (value, span) ->
-          AstAnnotator.attach_def_from_code_span e span (Some ci.file_name);
-          let sz = Utils.int_log2 (value + 1) in
+        | None, Some macro ->
+          AstAnnotator.attach_def_from_top_level_macro e macro;
+          let sz = Utils.int_log2 (macro.value + 1) in
           let (wires', w) = WireCollection.add_literal graph.thread_id
               ci.typedefs ci.macro_defs
-              (WithLength (sz, value)) graph.wires in
+              (WithLength (sz, macro.value)) graph.wires in
             graph.wires <- wires';
             Typing.const_data graph (Some w) (`Array (`Logic, ParamEnv.Concrete sz)) ctx.current
         | None, None ->
@@ -467,6 +479,7 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
   | Call (id, arg_list) ->
       let func = List.find_opt (fun (f: Lang.func_def) -> f.name = id) ci.func_defs
         |> unwrap_or_err ("Undefined function: " ^ id) e.span in
+      AstAnnotator.attach_def_from_top_level_func e func;
       let td_args = List.map (visit_expr graph ci ctx) arg_list in
       let ctx' = BuildContext.clear_bindings ctx |> ref in
       if List.length td_args <> List.length func.args then
@@ -682,7 +695,7 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
     (
       try let msg = MessageCollection.lookup_message graph.messages send_pack.send_msg_spec ci.channel_classes
         |> unwrap_or_err "Invalid message specifier in try send" e.span
-      in AstAnnotator.attach_def_from_code_span e msg.span (Some ci.file_name);
+      in AstAnnotator.attach_def_from_top_level_message e msg
       with _ -> ()
     );
 
@@ -749,6 +762,13 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
     let action = ImmediateRecv recv_pack.recv_msg_spec |> tag_with_span e.span in
     ctx_true.current.actions <- action::ctx_true.current.actions;
     AstAnnotator.attach_event e ctx_true.current None;
+
+    (
+      try let msg = MessageCollection.lookup_message graph.messages recv_pack.recv_msg_spec ci.channel_classes
+        |> unwrap_or_err "Invalid message specifier in try recv" e.span
+      in AstAnnotator.attach_def_from_top_level_message e msg
+      with _ -> ()
+    );
 
     let ctx_br = BuildContext.branch graph ctx branch_info in
     br_side_true.branch_event <- Some ctx_br.current;
@@ -940,7 +960,7 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
       |> unwrap_or_err "Invalid message specifier in send" e.span in
 
     (
-      AstAnnotator.attach_def_from_code_span e msg.span (Some ci.file_name);
+      AstAnnotator.attach_def_from_top_level_message e msg;
 
       let located_defs =
         let is_match (e : endpoint_def) = e.name = ep
@@ -980,7 +1000,8 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
       |> unwrap_or_err "Invalid message specifier in receive" e.span in
 
     (
-      AstAnnotator.attach_def_from_code_span e msg.span (Some ci.file_name);
+      AstAnnotator.attach_def_from_top_level_message e msg;
+
       let located_defs =
         let is_match (e : endpoint_def) = e.name = ep
         in List.find_opt is_match (graph.messages.endpoints @ graph.messages.args)
@@ -1016,6 +1037,12 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
       |> unwrap_or_err (Printf.sprintf "Invalid indirection %s" fieldname) e.span in
     let (wires', new_w) = WireCollection.add_slice graph.thread_id w (Const offset_le) len graph.wires in
     graph.wires <- wires';
+    (
+      let type_def = TypedefMap.type_def_name_resolve ci.typedefs td.dtype in
+      match type_def with
+      | Some type_def -> AstAnnotator.attach_def_from_top_level_type e type_def
+      | None -> ()
+    );
     {
       td with
       w = Some new_w;
@@ -1042,6 +1069,12 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
     )
   | Record (record_ty_name, field_exprs, None) ->
     (
+      match TypedefMap.type_def_name_resolve ci.typedefs @@ `Named (record_ty_name, []) with
+      | Some type_def -> AstAnnotator.attach_def_from_top_level_type e type_def
+      | None -> ()
+    );
+
+    (
       match TypedefMap.data_type_name_resolve ci.typedefs @@ `Named (record_ty_name, []) with
       | Some (`Record record_fields) ->
         (
@@ -1063,6 +1096,12 @@ and visit_expr (graph : event_graph) (ci : cunit_info)
       | _ -> raise (event_graph_error_default "Invalid record type name!" e.span)
     )
   | Record (record_ty_name, field_exprs, Some field_base) ->
+      (
+        match TypedefMap.type_def_name_resolve ci.typedefs @@ `Named (record_ty_name, []) with
+        | Some type_def -> AstAnnotator.attach_def_from_top_level_type e type_def
+        | None -> ()
+      );
+
       (* record update *)
       let td_base = visit_expr graph ci ctx field_base in
       let tds = List.map (fun (field_ident, e') -> (field_ident, e', visit_expr graph ci ctx e')) field_exprs in
@@ -1218,6 +1257,7 @@ let build_proc (config : Config.compile_config) sched module_name param_values
             id = p.param_name;
             value = v;
             span = p.span;
+            cunit_file_name = Some ci'.file_name;
           } :: acc
         | _ -> acc
       ) ci'.macro_defs proc.params param_values 
@@ -1239,16 +1279,6 @@ let build_proc (config : Config.compile_config) sched module_name param_values
   | Native body ->
     let msg_collection = MessageCollection.create body.channels
                                       proc.args body.spawns ci.channel_classes in
-
-    (
-      (* annotate endpoint ASTs with their channel class definitions *)
-      let annotate_ep_chan_cls_def (ep: endpoint_def ast_node) =
-        match MessageCollection.lookup_channel_class ci.channel_classes ep.d.channel_class with
-        | Some cc -> AstAnnotator.attach_def_from_code_span ep cc.span (Some ci.file_name)
-        | _ -> ()
-      in
-      List.iter (fun ep -> annotate_ep_chan_cls_def ep) proc.args
-    );
 
     let spawns =
     List.map (fun (s : spawn_def ast_node) ->

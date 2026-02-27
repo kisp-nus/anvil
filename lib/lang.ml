@@ -141,6 +141,7 @@ type macro_def = {
   id: identifier;
   value : int;
   span: code_span;
+  mutable cunit_file_name: string option;
 }
 
 (** A type definition ([type name = body])*)
@@ -149,6 +150,7 @@ and type_def = {
   body: data_type;
   params: param list; (** list of parameters *)
   span: code_span;
+  mutable cunit_file_name: string option;
 }
 
 (** Unit type. Basically an empty tuple. *)
@@ -232,6 +234,7 @@ type message_def = {
   recv_sync: message_sync_mode; (** how to synchronise when data is acknowledged *)
   sig_types: sig_type_chan_local list; (** the signal types of the values carried in the message *)
   span: code_span; (** code span of the message definition *)
+  mutable cunit_file_name: string option; (** the file in which the message type is defined (for reference, optional) *)
 }
 
 (** A channel class definition, containing a list of message type definitions. *)
@@ -240,6 +243,7 @@ type channel_class_def = {
   messages: message_def list;
   params: param list;  (** List of generic parameters *)
   span: code_span; (** code span of the channel class definition *)
+  mutable cunit_file_name: string option; (** the file in which the channel class is defined (for reference, optional) *)
 }
 
 (** The visibility of a channel. *)
@@ -500,14 +504,15 @@ type proc_def = {
   body: proc_def_body_maybe_extern; (** process body *)
   params: param list; (** compile-time parameters *)
   span: code_span; (** code span of the process body *)
+  mutable cunit_file_name: string option; (** the file in which the process is defined (for reference, optional) *)
 }
 
 (** An import directive for importing code from other files. *)
 type import_directive = {
-  file_name : string;
+  file_name : string; (** the file to import from *)
   is_extern : bool; (** is this import external?
       Currently an external import means importing SystemVerilog code *)
-  span: code_span;
+  span: code_span; (** code span of the import directive *)
 }
 type typed_arg = {
   arg_name: identifier;
@@ -520,6 +525,7 @@ type func_def =  {
   args: typed_arg list;
   body: expr_node;
   span: code_span;
+  mutable cunit_file_name: string option; (** the file in which the function is defined (for reference, optional) *)
 }
 (** A channel class definition, which is a set of message types. *)
 

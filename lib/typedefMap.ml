@@ -8,6 +8,11 @@ let of_list typedef_list =
   List.to_seq typedef_list |> Seq.map (fun (x : type_def) -> (x.name, x))
     |> Utils.StringMap.of_seq
 
+let type_def_name_resolve (type_defs : t) (dtype : data_type) : type_def option =
+  match dtype with
+  | `Named (type_name, _) -> Utils.StringMap.find_opt type_name type_defs
+  | _ -> None
+
 let data_type_name_resolve (type_defs : t) (dtype : data_type) : data_type option =
   match dtype with
   | `Named (type_name, params) -> Utils.StringMap.find_opt type_name type_defs |> Option.map (fun (x : type_def) ->
