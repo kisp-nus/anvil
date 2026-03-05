@@ -1,5 +1,7 @@
 open Lang
 open EventGraph
+open GraphBuildContext
+open ErrorCollector
 
 (* TODO: to use arrays instead of hash tables *)
 
@@ -126,7 +128,7 @@ let event_succ_distance non_succ_dist msg_dist_f later_dist_f either_dist_f even
   List.rev events |> List.iter (fun ev' ->
     if IntHashtbl.find_opt dist ev'.id |> Option.is_none then
     let d = match ev'.source with
-    | `Root None -> raise (Except.unknown_error_default "Unexpected root!")
+    | `Root None -> raise (Except.unknown_error_default "Unexpected root!"); non_succ_dist (* dummy fallback *)
     | `Later (ev1, ev2) -> later_dist_f (get_dist ev1) (get_dist ev2)
     | `Seq (ev1, ad) ->
       let d1 = get_dist ev1 in
@@ -145,7 +147,7 @@ let event_succ_distance non_succ_dist msg_dist_f later_dist_f either_dist_f even
       let first_two = either_dist_f (get_dist ev1) (get_dist ev2) in
       List.fold_left (fun v e -> either_dist_f v @@ get_dist e) first_two el
     | _ ->
-      raise (Except.unknown_error_default "Unexpected event source!")
+      raise (Except.unknown_error_default "Unexpected event source!"); non_succ_dist (* dummy fallback *)
     in
     set_dist ev' (min d event_distance_max)
   );
@@ -560,3 +562,105 @@ let graph_owned_regs g =
 
 let message_is_immediate msg is_send =
   (is_send && msg.recv_sync <> Dynamic) || (not is_send && msg.send_sync <> Dynamic)
+
+(** Substitutes every {!Lang.Recurse} leaf in [expr_node] with
+    [expr_full_node], effectively unrolling one recursion level. *)
+let rec recurse_unfold expr_full_node expr_node =
+  let unfold = recurse_unfold expr_full_node in
+  if expr_node.d = Recurse then
+    expr_full_node
+  else
+    let expr' = match expr_node.d with
+    | Literal _ | Identifier _
+    | Cycle _ | Sync _
+    | Ready _ | Read _ | Probe _
+    | Debug DebugFinish
+    | Recv _ -> expr_node.d
+    | Call (ident, expr_nodes) ->
+      Call (ident, List.map unfold expr_nodes)
+    | Assign (lval, expr_node') ->
+      Assign (lval, unfold expr_node')
+    | Binop (op, e1, e2) ->
+      ( match e2 with
+        | `List es2 ->
+          let es2' = List.map unfold es2 in
+          let e1' = unfold e1 in
+          Binop (op, e1', `List es2')
+        | `Single e2' ->
+          let e2n = unfold e2' in
+          Binop (op, unfold e1, (`Single e2n))
+      )
+    | Unop (op, expr_node') ->
+      Unop (op, unfold expr_node')
+    | Tuple expr_nodes ->
+      Tuple (List.map unfold expr_nodes)
+    | Let (idents, dtype, e) ->
+      Let (idents, dtype, unfold e)
+    | Join (e1, e2) ->
+      Join (unfold e1, unfold e2)
+    | Wait (e1, e2) ->
+      Wait (unfold e1, unfold e2)
+    | IfExpr (e1, e2, e3) ->
+      IfExpr (unfold e1, unfold e2, unfold e3)
+    | TrySend (sp, e1, e2) ->
+      let sp = {sp with send_data = unfold sp.send_data} in
+      TrySend (sp, unfold e1, unfold e2)
+    | TryRecv (ident, rp, e1, e2) ->
+      TryRecv (ident, rp, unfold e1, unfold e2)
+    | Construct (cs, e') ->
+      Construct (cs, Option.map unfold e')
+    | Record (ident, vs, base) ->
+      Record (ident,
+        List.map (fun (i, e) -> (i, unfold e)) vs,
+        Option.map unfold base
+      )
+    | Index (e', idx) ->
+      Index (unfold e', idx)
+    | Indirect (e', ident) ->
+      Indirect (unfold e', ident)
+    | Cast (e', dtype) ->
+      Cast (unfold e', dtype)
+    | Concat (es, is_flat) ->
+      Concat (List.map unfold es, is_flat)
+    | Match (e, arms) ->
+      Match (unfold e,
+        List.map (fun (m, eop) -> (m, Option.map unfold eop)) arms
+      )
+    | Debug (DebugPrint (format, es)) ->
+      Debug (DebugPrint (format, List.map unfold es))
+    | Send sp ->
+      Send {sp with send_data = unfold sp.send_data}
+    | SharedAssign (ident, e') ->
+      SharedAssign (ident, unfold e')
+    | List es ->
+      List (List.map unfold es)
+    | Recurse -> failwith "Shouldn't reach here!"
+    in
+    {expr_node with d = expr'}
+
+module IntHashTbl = Hashtbl.Make(Int)
+
+(** Determine how many times [expr_node] must be unrolled so that the total
+    body latency is at least as large as the recursion gap, then perform those
+    unrolls.  [construct_graphIR] is the IR-building traversal from {!GraphBuilder}
+    and is passed here to avoid a circular module dependency. *)
+let recurse_unfold_for_checks construct_graphIR ci shared_vars_info graph (expr_node : Lang.expr_node) =
+  let tmp_graph = {graph with last_event_id = -1} in
+  let td = construct_graphIR tmp_graph ci
+    (Typing.BuildContext.create_empty tmp_graph shared_vars_info true)
+    expr_node in
+  (* now just check the total *)
+  let root = List.find (fun e -> e.source = `Root None) tmp_graph.events in
+  let recurse = List.find (fun e -> e.is_recurse) tmp_graph.events in
+  let dists = event_min_distance_with_later tmp_graph.events root root in
+  let full_dist = IntHashTbl.find dists td.lt.live.id in
+  let recurse_dist = IntHashTbl.find dists recurse.id in
+  if recurse_dist = 0 then
+    raise (event_graph_error_default "Recurse delay must be greater than 0!" expr_node.span);
+  (* the number of times to unfold is minimum for the recurse time to first pass the end event *)
+  let unfold_times = full_dist / (max recurse_dist 1) in
+  let cur_expr = ref expr_node in
+  for _ = 1 to unfold_times do
+    cur_expr := recurse_unfold !cur_expr expr_node
+  done;
+  !cur_expr
