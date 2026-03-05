@@ -37,6 +37,28 @@ let attach_def_cunit_fname (target : Lang.compilation_unit) =
   ()
 
 
+
+(** Scoped definition helpers **)
+
+(** attaches definition information to the target (1st arg) from the source (2nd arg) from the given source compilation unit filename (3rd arg) *)
+let attach_def_span_expr (target : 'a Lang.ast_node) (source : 'b Lang.ast_node) (source_cunit_fname: string option) =
+  if not (List.exists (eq_strict source.span source_cunit_fname) target.def_span) then
+    let source_def_span = to_def_span source.span source_cunit_fname in
+    target.def_span <- List.append (source_def_span :: source.def_span) target.def_span
+
+(** attaches definition information to the target (1st arg) from the source code span (2nd arg) from the given source compilation unit filename (3rd arg) *)
+let attach_def_from_code_span (target : 'a Lang.ast_node) (source_span : Lang.code_span) (source_cunit_fname: string option) =
+  if not (List.exists (eq_strict source_span source_cunit_fname) target.def_span) then
+    let source_def_span = to_def_span source_span source_cunit_fname in
+    target.def_span <- source_def_span :: target.def_span
+
+(** attaches definition information to the target (1st arg) from the source def span (2nd arg) *)
+let attach_def_span (target : 'a Lang.ast_node) (source_span : Lang.def_span) =
+  if not (List.exists ((=) source_span) target.def_span) then
+    target.def_span <- source_span :: target.def_span
+
+
+
 (** Top-level helpers **)
 
 (** attaches definition information to the target (1st arg) from the source top-level channel_class_def (2nd arg) *)
@@ -70,31 +92,22 @@ let attach_def_from_top_level_proc (target : 'a Lang.ast_node) (source : Lang.pr
     target.def_span <- List.append (source_def_span :: target.def_span) target.def_span
 
 (** attaches definition information to the target (1st arg) from the source top-level message_def (2nd arg) *)
-let attach_def_from_top_level_message (target : 'a Lang.ast_node) (source : Lang.message_def) =
+let attach_def_from_top_level_message (target : 'a Lang.ast_node) (source : Lang.message_def) (spec: Lang.message_specifier) (graph: EventGraph.event_graph) =
   if not (List.exists (eq_strict source.span source.cunit_file_name) target.def_span) then
     let source_def_span = to_def_span source.span source.cunit_file_name in
-    target.def_span <- List.append (source_def_span :: target.def_span) target.def_span
+    target.def_span <- List.append (source_def_span :: target.def_span) target.def_span;
+
+  let ep = spec.endpoint in
+  let located_defs =
+    let is_match (e : Lang.endpoint_def) = e.name = ep in
+    List.find_opt is_match (graph.messages.endpoints @ graph.messages.args)
+    in match located_defs with
+    | Some ep ->
+      attach_def_from_code_span target ep.span (source.cunit_file_name);
+    | _ -> ()
 
 
 
-(** Scoped definition helpers **)
-
-(** attaches definition information to the target (1st arg) from the source (2nd arg) from the given source compilation unit filename (3rd arg) *)
-let attach_def_span_expr (target : 'a Lang.ast_node) (source : 'b Lang.ast_node) (source_cunit_fname: string option) =
-  if not (List.exists (eq_strict source.span source_cunit_fname) target.def_span) then
-    let source_def_span = to_def_span source.span source_cunit_fname in
-    target.def_span <- List.append (source_def_span :: source.def_span) target.def_span
-
-(** attaches definition information to the target (1st arg) from the source code span (2nd arg) from the given source compilation unit filename (3rd arg) *)
-let attach_def_from_code_span (target : 'a Lang.ast_node) (source_span : Lang.code_span) (source_cunit_fname: string option) =
-  if not (List.exists (eq_strict source_span source_cunit_fname) target.def_span) then
-    let source_def_span = to_def_span source_span source_cunit_fname in
-    target.def_span <- source_def_span :: target.def_span
-
-(** attaches definition information to the target (1st arg) from the source def span (2nd arg) *)
-let attach_def_span (target : 'a Lang.ast_node) (source_span : Lang.def_span) =
-  if not (List.exists ((=) source_span) target.def_span) then
-    target.def_span <- source_span :: target.def_span
 
 
 (** Event helpers **)

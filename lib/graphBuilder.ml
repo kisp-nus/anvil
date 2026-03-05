@@ -305,7 +305,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
   | Ready msg_spec ->
     let msg = MessageCollection.lookup_message graph.messages msg_spec ci.channel_classes
       |> unwrap_or_err "Invalid message specifier in ready" e.span in
-    AstAnnotator.attach_def_from_code_span e msg.span (Some ci.file_name);
+    AstAnnotator.attach_def_from_top_level_message e msg msg_spec graph;
     AstAnnotator.attach_event e ctx.current None;
     (* if msg.dir <> In then (
       (* mismatching direction *)
@@ -317,7 +317,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
   | Probe msg_spec ->
     let msg = MessageCollection.lookup_message graph.messages msg_spec ci.channel_classes
     |> unwrap_or_err "Invalid message specifier in probe" e.span in
-    AstAnnotator.attach_def_from_code_span e msg.span (Some ci.file_name);
+    AstAnnotator.attach_def_from_top_level_message e msg msg_spec graph;
     AstAnnotator.attach_event e ctx.current None;
     let wires, msg_ack_port = WireCollection.add_msg_ack_port graph.thread_id ci.typedefs msg_spec graph.wires in
     graph.wires <- wires;
@@ -406,7 +406,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
     (
       try let msg = MessageCollection.lookup_message graph.messages send_pack.send_msg_spec ci.channel_classes
         |> unwrap_or_err "Invalid message specifier in try send" e.span
-      in AstAnnotator.attach_def_from_top_level_message e msg
+      in AstAnnotator.attach_def_from_top_level_message e msg send_pack.send_msg_spec graph;
       with _ -> ()
     );
 
@@ -475,13 +475,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
     let action = ImmediateRecv recv_pack.recv_msg_spec |> tag_with_span e.span in
     ctx_true.current.actions <- action::ctx_true.current.actions;
     AstAnnotator.attach_event e ctx_true.current None;
-
-    (
-      try let msg = MessageCollection.lookup_message graph.messages recv_pack.recv_msg_spec ci.channel_classes
-        |> unwrap_or_err "Invalid message specifier in try recv" e.span
-      in AstAnnotator.attach_def_from_top_level_message e msg
-      with _ -> ()
-    );
+    AstAnnotator.attach_def_from_top_level_message e msg recv_pack.recv_msg_spec graph;
 
     let ctx_br = BuildContext.branch graph ctx branch_info in
     br_side_true.branch_event <- Some ctx_br.current;
@@ -699,17 +693,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
     let msg = MessageCollection.lookup_message graph.messages send_pack.send_msg_spec ci.channel_classes
       |> unwrap_or_err "Invalid message specifier in send" e.span in
 
-    (
-      AstAnnotator.attach_def_from_top_level_message e msg;
-
-      let located_defs =
-        let is_match (e : endpoint_def) = e.name = ep
-        in List.find_opt is_match (graph.messages.endpoints @ graph.messages.args)
-      in match located_defs with
-      | Some ep ->
-        AstAnnotator.attach_def_from_code_span e ep.span (Some ci.file_name);
-      | _ -> ()
-    );
+    AstAnnotator.attach_def_from_top_level_message e msg send_pack.send_msg_spec graph;
 
     if msg.dir <> Out then (
       (* mismatching direction *)
@@ -735,17 +719,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
     let msg = MessageCollection.lookup_message graph.messages recv_pack.recv_msg_spec ci.channel_classes
       |> unwrap_or_err "Invalid message specifier in receive" e.span in
 
-    (
-      AstAnnotator.attach_def_from_top_level_message e msg;
-
-      let located_defs =
-        let is_match (e : endpoint_def) = e.name = ep
-        in List.find_opt is_match (graph.messages.endpoints @ graph.messages.args)
-      in match located_defs with
-      | Some ep ->
-        AstAnnotator.attach_def_from_code_span e ep.span (Some ci.file_name);
-      | _ -> ()
-    );
+    AstAnnotator.attach_def_from_top_level_message e msg recv_pack.recv_msg_spec graph;
 
     if msg.dir <> Inp then (
       (* mismatching direction *)
