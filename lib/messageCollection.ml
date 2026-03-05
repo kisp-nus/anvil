@@ -42,12 +42,33 @@ let message_sync_mode_allowed = function
 let create (channels : channel_def ast_node list)
            (args : endpoint_def ast_node list)
            (spawns : spawn_def ast_node list)
-           (channel_classes : channel_class_def list) =
+           (channel_classes : channel_class_def list)
+           (proc_params : param list) 
+           (param_values : param_value list) =
   let endpoint_in_spawns =
     List.map data_of_ast_node spawns
     |> List.concat_map (fun (spawn : spawn_def) -> (Lang.preprocess_ep_spawn_args spawn.params))
     |> Utils.StringSet.of_list in
   let get_foreign name = Utils.StringSet.mem name endpoint_in_spawns in
+      let rec get_size_instances numo =
+      match numo with
+      | Lang.OneDimmension n -> n
+      | Lang.MultiDimmension (n, rest) ->
+          n * (get_size_instances rest)
+    in
+
+  let rec create_endpoint_array_string numo base_string_list = 
+    match numo with
+    | Lang.OneDimmension n -> 
+        List.concat_map (fun base_string -> 
+          List.init n (fun i -> base_string ^ "[" ^ (string_of_int i) ^ "]")
+        ) base_string_list
+    | Lang.MultiDimmension (n, rest) ->
+        let expanded = List.concat_map (fun base_string -> 
+          List.init n (fun i -> base_string ^ "[" ^ (string_of_int i) ^ "]")
+        ) base_string_list in
+        create_endpoint_array_string rest expanded
+  in
   let codegen_chan = fun span (chan : channel_def) ->
     (* let (left_foreign, right_foreign) =
       match chan.visibility with
@@ -66,16 +87,21 @@ let create (channels : channel_def ast_node list)
                           dir = Right; foreign = get_foreign chan.endpoint_right; opp = Some chan.endpoint_left; num_instances = None  } in
       [(left_endpoint, span); (right_endpoint, span)]
     else 
-      let n = Option.get chan.n_instances in
-      let endpoints = List.init n (fun i ->
-        let left_endpoint = { name = Printf.sprintf "%s[%d]" chan.endpoint_left i; channel_class = chan.channel_class;
+      let n' = Option.get chan.n_instances in
+      let n = ParamConcretise.concretise_array_dimm proc_params param_values n' in
+      let left_nm_list = create_endpoint_array_string n [chan.endpoint_left] in
+      let right_nm_list = create_endpoint_array_string n [chan.endpoint_right] in
+      assert (List.length left_nm_list = List.length right_nm_list);
+      
+      let endpoints = List.map2 (fun lft_nm  rght_nm ->
+        let left_endpoint = { name = lft_nm; channel_class = chan.channel_class;
                             channel_params = chan.channel_params; span = span;
-                            dir = Left; foreign = get_foreign chan.endpoint_left; opp = Some chan.endpoint_right; num_instances = Some n } in
-        let right_endpoint = { name = Printf.sprintf "%s[%d]" chan.endpoint_right i; channel_class = chan.channel_class;
-                            channel_params = chan.channel_params; span = span;
-                            dir = Right; foreign = get_foreign chan.endpoint_right; opp = Some chan.endpoint_left; num_instances = Some n } in
+                            dir = Left; foreign = get_foreign chan.endpoint_left; opp = Some rght_nm; num_instances = Some n' } in
+        let right_endpoint = { name = rght_nm; channel_class = chan.channel_class;
+                            channel_params  = chan.channel_params; span = span;
+                            dir = Right; foreign = get_foreign chan.endpoint_right; opp = Some lft_nm; num_instances = Some n' } in
         [(left_endpoint, span); (right_endpoint, span)]
-      ) |> List.concat in 
+        ) left_nm_list right_nm_list |> List.concat in 
       endpoints
   in
   let endpoints = List.concat_map (fun (ch : channel_def ast_node) -> [codegen_chan ch.span ch.d]) channels in
@@ -97,20 +123,25 @@ let create (channels : channel_def ast_node list)
   in
   (* override the user-specified foreign in args *)
   (* if its array of channels create ep instances appended with ep[i] for the messages *)
+
   let processed_args = List.concat_map (fun ({d = ep; def_span = _; action_event = _; span} : endpoint_def ast_node) ->
     match ep.num_instances with
     | None ->
         [({ep with foreign = get_foreign ep.name}, span)]
-    | Some num_instances ->
-        if num_instances <= 0 then
+    | Some num ->
+        (* let num_instances = in *)
+        let num_instances = ParamConcretise.concretise_array_dimm proc_params param_values num in
+        let size_instances = get_size_instances num_instances in
+        if size_instances <= 0 then
           raise (Except.TypeError [
             Text (Printf.sprintf "Number of instances for endpoint array %s must be positive" ep.name);
             Except.codespan_local span
           ]);
-        List.init num_instances (fun i ->
-          let nm = Printf.sprintf "%s[%d]" ep.name i in
+          let nm_list = create_endpoint_array_string num_instances [ep.name] in
+
+        List.map (fun nm ->
           ({ep with name = nm; foreign = get_foreign nm}, span)
-        )
+        )nm_list
   ) args in
   let local_messages = List.filter (fun ((p, _) : endpoint_def * code_span) -> not p.foreign) (processed_args @ endpoints) |>
   List.concat_map gather_from_endpoint in

@@ -22,6 +22,7 @@
 %token DOUBLE_RIGHT_ABRACK  (* << *)
 %token KEYWORD_CONST        (* const *)
 %token KEYWORD_READY        (* ready *)
+%token KEYWORD_VOID         (* void *)
 %token KEYWORD_PROBE        (* probe *)
 %token DOUBLE_EQ            (* == *)
 %token EQ_GT                (* => *)
@@ -85,6 +86,7 @@
 %token KEYWORD_SHARED       (* shared *)
 %token KEYWORD_ASSIGNED     (* assigned *)
 %token KEYWORD_BY           (* by *)
+%nonassoc PREC_NAMED_TYPE
 %right LEFT_ABRACK RIGHT_ABRACK LEFT_ABRACK_EQ RIGHT_ABRACK_EQ
 %right DOUBLE_GT SEMICOLON
 %right KEYWORD_LET KEYWORD_SET KEYWORD_PUT
@@ -252,7 +254,12 @@ type_def:
 | KEYWORD_ENUM; name = IDENT; params = param_list?;
   LEFT_BRACE; variants = separated_nonempty_list(COMMA, variant_def); RIGHT_BRACE
   {
-    { name = name; body = `Variant variants; params = Option.value ~default:[] params; span = {st = $startpos; ed = $endpos}; cunit_file_name = None } : Lang.type_def
+    { name = name; body = `Variant (None,variants); params = Option.value ~default:[] params; span = {st = $startpos; ed = $endpos}; cunit_file_name = None } : Lang.type_def
+  }
+| KEYWORD_ENUM; name = IDENT; dtype = data_type; params = param_list?;
+  LEFT_BRACE; variants = separated_nonempty_list(COMMA, variant_def); RIGHT_BRACE
+  {
+    { name = name; body = `Variant (Some dtype, variants); params = Option.value ~default:[] params; span = {st = $startpos; ed = $endpos}; cunit_file_name = None } : Lang.type_def
   }
 | KEYWORD_STRUCT; name = IDENT; params = param_list?;
   LEFT_BRACE; fields = separated_nonempty_list(COMMA, field_def); RIGHT_BRACE
@@ -264,7 +271,10 @@ type_def:
 
 variant_def:
 | name = IDENT; dtype_opt = variant_type_spec?
-  { (name, dtype_opt) }
+  { (name, dtype_opt, None) }
+
+| name = IDENT; EQUAL; lit = literal_val
+  { (name, None, Some lit) } 
 ;
 
 variant_type_spec:
@@ -273,6 +283,16 @@ variant_type_spec:
 | LEFT_PAREN; dtype = data_type; COMMA; more_dtypes = separated_nonempty_list(COMMA, data_type); RIGHT_PAREN
   { `Tuple (dtype::more_dtypes) }
 ;
+
+literal_val:
+| literal_str = BIT_LITERAL
+  { ParserHelper.bit_literal_of_string literal_str }
+| literal_str = DEC_LITERAL
+  { ParserHelper.dec_literal_of_string literal_str }
+| literal_str = HEX_LITERAL
+  { ParserHelper.hex_literal_of_string literal_str }
+| literal_val = INT
+  { Lang.NoLength literal_val}
 
 field_def:
 | name = IDENT; COLON; dtype = data_type
@@ -325,7 +345,7 @@ proc_def_arg:
       span = {st = $startpos; ed = $endpos};
     } : Lang.endpoint_def
   }
-| foreign = foreign_tag; ident = IDENT; LEFT_BRACKET; n = INT; RIGHT_BRACKET; COLON; chan_dir = channel_direction; chan_class = channel_class_concrete
+| foreign = foreign_tag; ident = IDENT; n = array_dimm; COLON; chan_dir = channel_direction; chan_class = channel_class_concrete
   {
     {
       name = ident;
@@ -342,6 +362,14 @@ proc_def_arg:
   }
 ;
 
+array_dimm:
+| LEFT_BRACKET; n = int_maybe_param; RIGHT_BRACKET
+  { Lang.OneDim n }
+| LEFT_BRACKET; n = int_maybe_param; RIGHT_BRACKET; rst = array_dimm;
+  {Lang.MultiDim (n, rst) }
+
+
+   
 // To Ask: What does this do
 foreign_tag:
 | { false }
@@ -376,7 +404,7 @@ channel_def:
   }
 | left_foreign = foreign_tag; left_endpoint = IDENT; DOUBLE_MINUS;
   right_foreign = foreign_tag; right_endpoint = IDENT; COLON;
-  chan_class = channel_class_concrete LEFT_BRACKET; n = INT; RIGHT_BRACKET
+  chan_class = channel_class_concrete; n = array_dimm
   {
     let visibility = match left_foreign, right_foreign with
       | true, true -> Lang.BothForeign
@@ -425,10 +453,18 @@ spawn:
 args_spawn:
 | ident = IDENT
   { Lang.SingleEp ident }
-| ident = IDENT; LEFT_BRACKET; start = INT; PLUS; COLON; size = INT; RIGHT_BRACKET
-  { Lang.RangeEp (ident, start, size) }
-| ident = IDENT; LEFT_BRACKET; index = INT; RIGHT_BRACKET;
-  { Lang.SingleEp (Printf.sprintf "%s[%d]" ident index)  }
+| ident = IDENT; idx = array_index_concrete
+  { Lang.IndexedEp (ident, idx) }
+
+array_index_concrete:
+| LEFT_BRACKET; n = INT; RIGHT_BRACKET
+  { Lang.IndexSingle n }
+| LEFT_BRACKET; start = INT; PLUS; COLON; size = INT; RIGHT_BRACKET
+  { Lang.IndexRange (start, size) }
+| LEFT_BRACKET; start = INT; PLUS; COLON; size = INT;RIGHT_BRACKET; rest = array_index_concrete
+  { Lang.IndexMultiDimRange (start, size, rest) }
+| LEFT_BRACKET; n = INT; RIGHT_BRACKET;rest = array_index_concrete
+  { Lang.IndexMultiDimSingle (n, rest) }
 
 param_value:
 | n = INT
@@ -542,7 +578,7 @@ expr:
   { e }
 | KEYWORD_MATCH; e = node(expr); LEFT_BRACE; match_arm_list = separated_list(COMMA, match_arm); RIGHT_BRACE
   { Lang.Match (e, match_arm_list) }
-| ASTERISK; reg_id = lvalue_base
+| ASTERISK; reg_id = lvalue
   { Lang.Read reg_id }
 | constructor_spec = constructor_spec; e = ioption(node(expr_in_parenthese))
   { Lang.Construct (constructor_spec, e) }
@@ -646,6 +682,8 @@ bin_expr:
   { Lang.Binop (Lang.Gte, v1, (`Single v2)) }
 | v1 = node(expr); PLUS; v2 = node(expr)
   { Lang.Binop (Lang.Add, v1, (`Single v2)) }
+| v1 = node(expr); ASTERISK; v2 = node(expr)
+  { Lang.Binop (Lang.Mul, v1, (`Single v2)) }
 | v1 = node(expr); MINUS; v2 = node(expr)
   { Lang.Binop (Lang.Sub, v1, (`Single v2)) }
 | v1 = node(expr); XOR; v2 = node(expr)
@@ -670,19 +708,14 @@ un_expr:
 | OR; e = node(expr)
   { Lang.Unop (Lang.OrAll, e) } %prec UOR
 ;
-lvalue_base:
+
+lvalue:
 | regname = IDENT
   { Lang.Reg regname }
-| lval = lvalue_base; LEFT_BRACKET; ind = index; RIGHT_BRACKET
-  { Lang.Indexed (lval, ind) }
-| LEFT_PAREN; lval = lvalue; RIGHT_PAREN
-  { lval }
-;
-lvalue:
-| lval = lvalue_base
-  { lval }
 | lval = lvalue; PERIOD; fieldname = IDENT
   { Lang.Indirected (lval, fieldname) }
+| lval = lvalue; LEFT_BRACKET; ind = index; RIGHT_BRACKET
+  { Lang.Indexed (lval, ind) }
 ;
 
 index:
@@ -785,11 +818,19 @@ message_direction:
 // ;
 
 sig_type_chan_local:
-  dtype = data_type; AT; lifetime_opt = lifetime_spec_chan_local?
+|  dtype = data_type; AT; lifetime_opt = lifetime_spec_chan_local?
   {
     let lifetime = Option.value ~default:Lang.sig_lifetime_this_cycle_chan_local lifetime_opt in
     {
       dtype = dtype;
+      lifetime = lifetime;
+    } : Lang.sig_type_chan_local
+  }
+| KEYWORD_VOID; AT; lifetime_opt = lifetime_spec_chan_local?
+  {
+    let lifetime = Option.value ~default:Lang.sig_lifetime_this_cycle_chan_local lifetime_opt in
+    {
+      dtype = Lang.unit_dtype;
       lifetime = lifetime;
     } : Lang.sig_type_chan_local
   }
@@ -807,7 +848,7 @@ data_type_no_array:
 //   { `Parametrized (dtype, n) }
 | KEYWORD_LOGIC
   { `Logic }
-| typename = IDENT
+| typename = IDENT %prec PREC_NAMED_TYPE
   { `Named (typename, []) }
 | typename = IDENT; LEFT_ABRACK; compile_params = separated_list(COMMA, param_value); RIGHT_ABRACK;
   { `Named (typename, compile_params) }
@@ -881,22 +922,27 @@ message_specifier:
       msg = msg_type;
     } : Lang.message_specifier
   }
-| endpoint = IDENT; LEFT_BRACKET; index = INT; RIGHT_BRACKET; PERIOD; msg_type = IDENT
+| endpoint = IDENT;indx_str=get_array_index_string;PERIOD; msg_type = IDENT
   {
     {
-      endpoint = Printf.sprintf "%s[%d]" endpoint index;
-      msg = msg_type;
-    } : Lang.message_specifier
-  }
-| endpoint = IDENT; LEFT_BRACKET; index = IDENT; RIGHT_BRACKET; PERIOD; msg_type = IDENT
-  {
-    {
-      endpoint = Printf.sprintf "%s[%s]" endpoint index;
+      endpoint = Printf.sprintf "%s%s" endpoint indx_str;
       msg = msg_type;
     } : Lang.message_specifier
   }
 ;
 
+
+get_array_index_string:
+| LEFT_BRACKET; idx_content = int_or_id; RIGHT_BRACKET
+  { Printf.sprintf "[%s]" idx_content }
+| LEFT_BRACKET; idx_content = int_or_id; RIGHT_BRACKET; rest = get_array_index_string
+  { Printf.sprintf "[%s]%s" idx_content rest }
+
+int_or_id: 
+| n = INT
+  { string_of_int n }
+| id = IDENT
+  { id }
 shared_var_def:
   KEYWORD_SHARED; LEFT_PAREN; lifetime = lifetime_spec; RIGHT_PAREN; ident = IDENT; KEYWORD_ASSIGNED; KEYWORD_BY; thread_id = INT
   {

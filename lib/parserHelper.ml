@@ -50,6 +50,12 @@ let hex_literal_of_string (s : string) : literal =
     | 'd' -> `Zd
     | 'e' -> `Ze
     | 'f' -> `Zf
+    | 'A' -> `Za
+    | 'B' -> `Zb
+    | 'C' -> `Zc
+    | 'D' -> `Zd
+    | 'E' -> `Ze
+    | 'F' -> `Zf
     | _ -> raise (LiteralConversionError [Text "Bad character in hexadecimal literal!"])
   in
   let spl = String.split_on_char 'h' s in

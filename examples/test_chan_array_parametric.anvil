@@ -1,0 +1,42 @@
+chan foobar_ch<T : type> {
+    left  req : (T@ req),
+    right res : (logic@#1)
+}
+
+proc Foo<T : type, R2 : int>( ep[R2] : right foobar_ch<T> ) {
+    reg counter : logic[8];
+    loop{
+        send ep[2].req ( 8'd42 ) >>
+        let res = recv ep[2].res >>
+        dprint"[Cycle %d][Foo] Received response: %d" (*counter,res) >>
+        cycle 1
+    }
+    loop{
+        set counter := *counter + 8'd1
+    }
+}
+
+proc FooArray<T : type, R1 : int, C1 : int>(ep[R1][C1] : right foobar_ch<T> ) {
+    reg counter : logic[8];
+    loop{
+        send ep[0][2].req ( 8'd42 ) >>
+        let res = recv ep[0][2].res >>
+        dprint"[Cycle %d][Foo] Received response: %d" (*counter,res) >>
+        cycle 1
+    }
+    loop{
+        set counter := *counter + 8'd1
+    }
+}
+
+proc test_channel_param() {
+    chan ep_le -- ep_ri : foobar_ch<logic[8]>[3][4];
+    spawn Foo<logic[8], 4>(ep_ri[0][0+:4]);
+    // passed a range of endpoints
+    spawn FooArray<logic[8], 2, 4>(ep_ri[1+:2][0+:4]);
+
+    loop{
+        cycle 10 >>
+        dfinish
+    }
+}

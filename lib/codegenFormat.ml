@@ -29,7 +29,7 @@ let format_dtype (typedefs : TypedefMap.t) (macro_defs : Lang.macro_def list) (d
   | _ ->
     let size = (TypedefMap.data_type_size typedefs macro_defs dtype) in
     if size = 0 then
-      "int" (* TODO: hacky *)
+      raise (Failure "[Internal Error] Please report : Cannot format datatype with size 0")
     else
       Printf.sprintf "logic[%d:0]" @@ size - 1
 
@@ -57,13 +57,9 @@ let format_wire_maybe_const (v : WireCollection.wire MaybeConst.maybe_int_const)
 module Endpoint = struct
   open EventGraph
   let extract_index (name : identifier) : string option =
-    let len = String.length name in
-    if len > 0 && name.[len - 1] = ']' then
-      match String.rindex_opt name '[' with
-      | Some idx_start -> Some (String.sub name (idx_start) (len - idx_start))
-      | None -> None
-    else
-      None
+    match String.index_opt name '[' with
+    | Some idx_start -> Some (String.sub name idx_start (String.length name - idx_start))
+    | None -> None
 
   let base_name (name : identifier) : identifier =
     match String.index_opt name '[' with
@@ -81,9 +77,16 @@ module Endpoint = struct
       | None -> opp_base
 
   let canonicalize_endpoint_name (endpoint_name : identifier) (g : event_graph) : identifier =
-    match MessageCollection.lookup_endpoint g.messages endpoint_name with
-    | Some endpoint_local -> canonicalize endpoint_local
+    let base = base_name endpoint_name in
+    match MessageCollection.lookup_endpoint g.messages base with
+    | Some endpoint_local -> 
+        let index_suffix = extract_index endpoint_name in
+        let canonicalized_base = canonicalize endpoint_local in
+        (match index_suffix with
+         | Some idx -> canonicalized_base ^ idx
+         | None -> canonicalized_base)
     | None -> endpoint_name
 end
 
+let endpoint_base_name = Endpoint.base_name
 let canonicalize_endpoint_name = Endpoint.canonicalize_endpoint_name

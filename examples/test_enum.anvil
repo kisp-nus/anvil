@@ -1,0 +1,70 @@
+enum color logic[3]{
+    Red = 3'b000,
+    Green = 3'b001,
+    Blue = 3'b010
+}
+
+
+enum color2 logic[2]{
+    Red = 2'b00,
+    Green = 2'b01,
+    Blue = 2'b10,
+    White = 2'b11
+}
+
+enum color3 logic[1]{
+    Red = 1'b0,
+    Green
+}
+
+enum color4 logic[2]{
+    Red = 2'b00,
+    Green = 2'b01,
+    Blue = 2'b10,
+    reserved = 2'b11
+}
+
+
+// need to fix value collision according to SV spec, currently both will posses same value
+
+enum color5 logic[2]{
+    Red,
+    Green = 2'b00,
+    Blue = 2'b01,
+    White = 2'b10
+}
+
+
+proc test_enum(){
+    loop{
+        let r = color::Red >>
+        let b = color::Blue >>
+        let g = color::Green >>
+        dprint "Red: %d | Blue: %d | Green: %d" (r ,b ,g) >>
+        cycle 1 >>
+        let r2 = color2::Red >>
+        let b2 = color2::Blue >>
+        let g2 = color2::Green >>
+        let w2 = color2::White >>
+        dprint "Red: %d | Blue: %d | Green: %d | White: %d" (r2 ,b2 ,g2, w2) >>
+        cycle 1 >>
+        let r3 = color3::Red >>
+        let g3 = color3::Green >>
+        dprint "Red: %d | Green: %d" (r3 ,g3) >>
+        cycle 1 >>
+        let r4 = color4::Red >>
+        let b4 = color4::Blue >>
+        let g4 = color4::Green >>
+        let res4 = color4::reserved >>
+        dprint "Red: %d | Blue: %d | Green: %d | Reserved: %d" (r4 ,b4 ,g4, res4) >>
+        cycle 1 >>
+        let r5 = color5::Red >>
+        let b5 = color5::Blue >>
+        let g5 = color5::Green >>
+        let w5 = color5::White  >>
+        dprint "Red: %d | Blue: %d | Green: %d | White: %d" (r5 ,b5 ,g5, w5) >>
+        cycle 1 >>
+        dfinish >>
+        cycle 1
+    }
+}

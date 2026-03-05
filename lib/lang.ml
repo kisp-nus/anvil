@@ -103,11 +103,87 @@ let sig_lifetime_const : sig_lifetime =
 (** Direction of an endpoint. *)
 type endpoint_direction = Left | Right
 
+type bit = [`Z0 | `Z1]
+type digit = [`Z0 | `Z1 | `Z2 | `Z3 | `Z4 | `Z5 | `Z6 | `Z7 | `Z8 | `Z9]
+type hexit = [`Z0 | `Z1 | `Z2 | `Z3 | `Z4 | `Z5 | `Z6 | `Z7 | `Z8 | `Z9 |
+            `Za | `Zb | `Zc | `Zd | `Ze | `Zf]
+type all_digit = hexit
+
+type literal =
+| Binary of int * bit list
+| Decimal of int * digit list
+| Hexadecimal of int * hexit list
+| WithLength of int * int
+| NoLength of int
+
+
+let string_of_digit d : string =
+  match d with
+  | `Z0 -> "0"
+  | `Z1 -> "1"
+  | `Z2 -> "2"
+  | `Z3 -> "3"
+  | `Z4 -> "4"
+  | `Z5 -> "5"
+  | `Z6 -> "6"
+  | `Z7 -> "7"
+  | `Z8 -> "8"
+  | `Z9 -> "9"
+  | `Za -> "a"
+  | `Zb -> "b"
+  | `Zc -> "c"
+  | `Zd -> "d"
+  | `Ze -> "e"
+  | `Zf -> "f"
+
+let value_of_digit d : int =
+  match d with
+  | `Z0 -> 0x0
+  | `Z1 -> 0x1
+  | `Z2 -> 0x2
+  | `Z3 -> 0x3
+  | `Z4 -> 0x4
+  | `Z5 -> 0x5
+  | `Z6 -> 0x6
+  | `Z7 -> 0x7
+  | `Z8 -> 0x8
+  | `Z9 -> 0x9
+  | `Za -> 0xa
+  | `Zb -> 0xb
+  | `Zc -> 0xc
+  | `Zd -> 0xd
+  | `Ze -> 0xe
+  | `Zf -> 0xf
+
+
+
+let literal_bit_len (lit : literal) : int option =
+  match lit with
+  | Binary (n, _) | Decimal (n, _) | Hexadecimal (n, _) | WithLength (n, _) -> Some n
+  | NoLength v -> Some (Utils.int_log2 (v + 1))
+
+let literal_eval (lit : literal) : int =
+  match lit with
+  | Binary (_, b) ->
+      List.fold_left (fun n x -> n * 2 + (value_of_digit x)) 0 b
+  | Decimal (_, d) ->
+      List.fold_left (fun n x -> n * 10 + (value_of_digit x)) 0 d
+  | Hexadecimal (_, h) ->
+      List.fold_left (fun n x -> n * 16 + (value_of_digit x)) 0 h
+  | WithLength (_, v) -> v
+  | NoLength v -> v
+
+let dtype_of_literal (lit : literal) =
+  let n = literal_bit_len lit |> Option.get in
+  match n with
+  | 1 -> `Logic
+  | _ -> `Array (`Logic, ParamEnv.Concrete n)
+
 (** A data type. *)
 type data_type = [
   | `Logic
   | `Array of data_type * int maybe_param
-  | `Variant of (identifier * data_type option) list (** ADT sum type *)
+  | `Variant of (data_type option)*(identifier * (data_type option)*(literal option)) list (** ADT sum type *)
   | `Record of (identifier * data_type) list (** ADT product type *)
   | `Tuple of data_type list
   | `Opaque of identifier (** type reserved for internal purposes *)
@@ -123,6 +199,23 @@ and param_value =
 (** Endpoint definition. A pair is
 created once a channel class
 is instantiated. *)
+type array_dimm_concrete =
+  | OneDimmension of int
+  | MultiDimmension of int * array_dimm_concrete
+
+type array_index_concrete =
+  | IndexSingle of int
+  | IndexRange of (int *int)
+  | IndexMultiDimRange of (int * int * array_index_concrete)
+  | IndexMultiDimSingle of (int*array_index_concrete)
+  
+
+
+type array_dimensions =
+  | OneDim of (int maybe_param)
+  | MultiDim of (int maybe_param)*(array_dimensions)
+
+
 type endpoint_def = {
   name: identifier;
   channel_class: identifier;
@@ -133,9 +226,11 @@ type endpoint_def = {
   used within this process? *)
   opp: identifier option; (** if the endpoint is created locally, the other endpoint associated
   with the same channel *)
-  num_instances : int option; (** number of instances for arrayed channels *)
+  num_instances : array_dimensions option; (** number of instances for arrayed channels *)
   span: code_span;
 }
+
+(** A macro definition. *)
 
 type macro_def = {
   id: identifier;
@@ -157,25 +252,27 @@ and type_def = {
 let unit_dtype = `Tuple []
 
 (** Number of bits required to hold the tag for a variant type. *)
-let variant_tag_size (v: [< `Variant of (identifier * data_type option) list]) : int =
+let variant_tag_size (v: [>`Variant of (data_type option)*((identifier * (data_type option)*(literal option)) list)]) : int =
   match v with
-  | `Variant vlist -> List.length vlist |> Utils.int_log2
+  | `Variant (_, vlist) -> List.length vlist |> Utils.int_log2
 
 (** Data type a variant type constructor. *)
-let variant_lookup_dtype (v: [< `Variant of (identifier * data_type option) list]) (cstr: identifier) : data_type option =
-  match v with
-  | `Variant vlist ->
-      List.find_opt (fun x -> (fst x) = cstr) vlist |> Option.map snd |> Option.join
+let variant_lookup_dtype (v: [> `Variant of (data_type option)*((identifier * (data_type option) * (literal option)) list)]) (cstr: identifier) : data_type option =
+    match v with
+    | `Variant (_, vlist) ->
+      List.find_opt (fun (x,_dt,_vl) -> x = cstr) vlist |> Option.map (fun (_,dt,_) -> dt) |> Option.join
 
 (** Index of a variant type constructor. *)
-let variant_lookup_index (v: [< `Variant of (identifier * data_type option) list]) (cstr: identifier) : int option =
+let variant_lookup_index (v: [> `Variant of (data_type option)*((identifier * (data_type option) * (literal option)) list)]) (cstr: identifier) : int option =
   let res : int option ref = ref None in
   match v with
-  | `Variant vlist ->
-      List.iteri (fun i x ->
+  | `Variant (_,vlist) ->
+      List.iteri (fun i (x,_,v) ->
         if Option.is_none !res then begin
-          if (fst x) = cstr then
-            res := Some i
+          if x = cstr then
+            if Option.is_none v then
+              res := Some i
+            else res := Some (Option.get v |> literal_eval )
           else ()
         end else ()) vlist;
   !res
@@ -259,83 +356,11 @@ type channel_def = {
   endpoint_left: identifier;
   endpoint_right: identifier;
   visibility: channel_visibility;
-  n_instances : int option; (** number of instances for arrayed channels To Do: add support for parametrization *) 
+  n_instances : array_dimensions option; (** number of instances for arrayed channels To Do: add support for parametrization *) 
 }
 
 (* expressions *)
 
-type bit = [`Z0 | `Z1]
-type digit = [`Z0 | `Z1 | `Z2 | `Z3 | `Z4 | `Z5 | `Z6 | `Z7 | `Z8 | `Z9]
-type hexit = [`Z0 | `Z1 | `Z2 | `Z3 | `Z4 | `Z5 | `Z6 | `Z7 | `Z8 | `Z9 |
-            `Za | `Zb | `Zc | `Zd | `Ze | `Zf]
-type all_digit = hexit
-
-let string_of_digit d : string =
-  match d with
-  | `Z0 -> "0"
-  | `Z1 -> "1"
-  | `Z2 -> "2"
-  | `Z3 -> "3"
-  | `Z4 -> "4"
-  | `Z5 -> "5"
-  | `Z6 -> "6"
-  | `Z7 -> "7"
-  | `Z8 -> "8"
-  | `Z9 -> "9"
-  | `Za -> "a"
-  | `Zb -> "b"
-  | `Zc -> "c"
-  | `Zd -> "d"
-  | `Ze -> "e"
-  | `Zf -> "f"
-
-let value_of_digit d : int =
-  match d with
-  | `Z0 -> 0x0
-  | `Z1 -> 0x1
-  | `Z2 -> 0x2
-  | `Z3 -> 0x3
-  | `Z4 -> 0x4
-  | `Z5 -> 0x5
-  | `Z6 -> 0x6
-  | `Z7 -> 0x7
-  | `Z8 -> 0x8
-  | `Z9 -> 0x9
-  | `Za -> 0xa
-  | `Zb -> 0xb
-  | `Zc -> 0xc
-  | `Zd -> 0xd
-  | `Ze -> 0xe
-  | `Zf -> 0xf
-
-type literal =
-| Binary of int * bit list
-| Decimal of int * digit list
-| Hexadecimal of int * hexit list
-| WithLength of int * int
-| NoLength of int
-
-let literal_bit_len (lit : literal) : int option =
-  match lit with
-  | Binary (n, _) | Decimal (n, _) | Hexadecimal (n, _) | WithLength (n, _) -> Some n
-  | NoLength v -> Some (Utils.int_log2 (v + 1))
-
-let literal_eval (lit : literal) : int =
-  match lit with
-  | Binary (_, b) ->
-      List.fold_left (fun n x -> n * 2 + (value_of_digit x)) 0 b
-  | Decimal (_, d) ->
-      List.fold_left (fun n x -> n * 10 + (value_of_digit x)) 0 d
-  | Hexadecimal (_, h) ->
-      List.fold_left (fun n x -> n * 16 + (value_of_digit x)) 0 h
-  | WithLength (_, v) -> v
-  | NoLength v -> v
-
-let dtype_of_literal (lit : literal) =
-  let n = literal_bit_len lit |> Option.get in
-  match n with
-  | 1 -> `Logic
-  | _ -> `Array (`Logic, ParamEnv.Concrete n)
 
 type binop = Add | Sub | Xor | And | Or | Lt | Gt | Lte | Gte |
              Shl | Shr | Eq | Neq | Mul | In | LAnd | LOr
@@ -464,7 +489,7 @@ type spawn_def = {
 }
 and args_spawn = 
   | SingleEp of identifier
-  | RangeEp of identifier *int * int  (** name, start, size*)
+  | IndexedEp of identifier * array_index_concrete
 
 (* TODO: specify the type? *)
 type shared_var_def = {
@@ -605,16 +630,23 @@ and string_of_data_type (dtype : data_type) : string =
       | ParamEnv.Param _ -> "Param"
     in
     "Array[" ^ n' ^ "] (" ^ string_of_data_type d ^ ")"
-  | `Variant (id_opt_list) ->
-      "Variant (" ^ String.concat ", " (List.map (fun (id, dt_opt) ->
-        match dt_opt with
-        | Some dt -> id ^ ": " ^ string_of_data_type dt
-        | None -> id) id_opt_list) ^ ")"
+  | `Variant (_, (id_opt_list)) ->
+      "Variant (" ^ String.concat ", " (List.map (fun (id, dt_opt, val_opt) ->
+        match (dt_opt, val_opt) with
+        | (Some dt, None) -> id ^ ": " ^ string_of_data_type dt
+        | (None, Some lit) -> id ^ ": " ^ string_of_literal lit
+        | (Some dt, Some lit) -> id ^ ": " ^ string_of_data_type dt ^ " = " ^ string_of_literal lit
+        | (None, None) -> id) id_opt_list) ^ ")"
   | `Record fields ->
       "Record (" ^ String.concat ", " (List.map (fun (field_name, field_type) ->
         field_name ^ ": " ^ string_of_data_type field_type) fields) ^ ")"
   | `Tuple dt_list ->
-      "Tuple (" ^ String.concat ", " (List.map string_of_data_type dt_list) ^ ")"
+    (
+      match dt_list with
+      | [] -> "Void"
+      | _ ->
+        "Tuple (" ^ String.concat ", " (List.map string_of_data_type dt_list) ^ ")"
+    )
   | `Opaque id -> "Opaque " ^ id
   | `Named (name, params) ->
       let params_str = String.concat ", " (List.map (function
@@ -634,16 +666,21 @@ and string_of_literal (lit : literal) : string =
   | WithLength (n, v) -> "WithLength (" ^ string_of_int n ^ ", " ^ string_of_int v ^ ")"
   | NoLength v -> "NoLength " ^ string_of_int v
 
-let sub_ep_index (ep: message_specifier) (index: int) : message_specifier =
+let sub_ep_index (ep: message_specifier) (index: int) (id : identifier) : message_specifier =
   let is_array = String.contains ep.endpoint '[' && String.contains ep.endpoint ']'in
   if is_array then
-    let base_name =
-      match String.index_opt ep.endpoint '[' with
-      | Some idx -> String.sub ep.endpoint 0 idx
-      | None -> ep.endpoint
-    in
-    { endpoint = Printf.sprintf "%s[%d]" base_name index; msg = ep.msg }
-  else
+    (
+    let base_name = String.sub ep.endpoint 0 (String.index ep.endpoint '[') in
+    let rest = String.sub ep.endpoint (String.index ep.endpoint '[') (String.length ep.endpoint - String.index ep.endpoint '[') in
+    let replaced_string = String.map (fun c ->
+      if c = id.[0] then
+        Char.chr (Char.code '0' + index)
+      else
+        c
+    ) rest in
+    { endpoint = base_name ^ replaced_string; msg = ep.msg }
+    )
+  else 
     ep
 
 let rec substitute_expr_identifier (id: identifier) (value: expr_node) (idx : int) (expr: expr_node)  : expr_node =
@@ -692,7 +729,7 @@ let rec substitute_expr_identifier (id: identifier) (value: expr_node) (idx : in
       Assign (new_lv, subst e)
   | Send {send_msg_spec; send_data} ->
       Send {
-        send_msg_spec = sub_ep_index send_msg_spec idx;
+        send_msg_spec = sub_ep_index send_msg_spec idx id;
         send_data = subst send_data
       }
   | Debug (DebugPrint (msg, exprs)) ->
@@ -717,13 +754,13 @@ let rec substitute_expr_identifier (id: identifier) (value: expr_node) (idx : in
   | TryRecv (ident, recv_pack, e1, e2) ->
     TryRecv (
       ident,
-      {recv_msg_spec = sub_ep_index recv_pack.recv_msg_spec idx},
+      {recv_msg_spec = sub_ep_index recv_pack.recv_msg_spec idx id},
       subst e1,
       subst e2
     )
   | TrySend (send_pack, e1, e2) ->
     TrySend (
-      {send_msg_spec = sub_ep_index send_pack.send_msg_spec idx; send_data = subst send_pack.send_data},
+      {send_msg_spec = sub_ep_index send_pack.send_msg_spec idx id; send_data = subst send_pack.send_data},
       subst e1,
       subst e2
     )
@@ -742,7 +779,7 @@ let rec substitute_expr_identifier (id: identifier) (value: expr_node) (idx : in
   | Recurse | Literal _ | Cycle _
   | Identifier _ | Ready _ | Probe _-> expr.d
   | Recv recv_pack ->
-      let new_recv_pack = {recv_msg_spec = sub_ep_index recv_pack.recv_msg_spec idx} in
+      let new_recv_pack = {recv_msg_spec = sub_ep_index recv_pack.recv_msg_spec idx id} in
       Recv new_recv_pack
   | Sync _ -> expr.d
 
@@ -828,13 +865,51 @@ in get_lv lv
 
 
 let preprocess_ep_spawn_args (args : args_spawn list) : identifier list =
+  let rec generate_ep_indices base_string_list idx =
+    match idx with
+    | IndexSingle i ->
+      List.map(
+        fun base_str -> base_str ^ (Printf.sprintf "[%d]" i)
+      )base_string_list
+    | IndexRange (start, sz) ->
+        let end_v = start + sz - 1 in
+        let rec generate_range curr =
+          if curr > end_v then
+            []
+          else  
+            let new_base_strings = List.map(
+              fun base_str -> base_str ^ (Printf.sprintf "[%d]" curr)
+            ) base_string_list in
+            new_base_strings @ (generate_range (curr + 1))
+        in
+        generate_range start
+    | IndexMultiDimSingle (i, rest) ->
+        let new_base_strings = List.map(
+          fun base_str -> base_str ^ (Printf.sprintf "[%d]" i)
+        ) base_string_list in
+        generate_ep_indices new_base_strings rest
+    | IndexMultiDimRange (start, size, rest) ->
+        List.concat_map (fun curr ->
+          let new_base_strings = List.map(
+            fun base_str -> base_str ^ (Printf.sprintf "[%d]" curr)
+          ) base_string_list in
+          generate_ep_indices new_base_strings rest
+        ) (List.init size (fun i -> start + i))
+  in
+
   List.concat_map
     (function
       | SingleEp name -> [name]
-      | RangeEp (name, start, size) ->
-        (
-          [List.init size (fun i -> Printf.sprintf "%s[%d]" name (start + i))] |> List.concat
-
-        )
+      | IndexedEp (name, idx) ->
+        generate_ep_indices [name] idx
     ) 
     args
+
+let rec calculate_array_index_concrete_size (dimm : array_index_concrete) : int =
+  match dimm with
+  | IndexSingle _ -> 1
+  | IndexRange (_, sz) -> sz
+  | IndexMultiDimSingle (_, rest) ->
+      calculate_array_index_concrete_size rest
+  | IndexMultiDimRange (_, size, rest) ->
+      size * (calculate_array_index_concrete_size rest)

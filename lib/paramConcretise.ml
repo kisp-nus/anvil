@@ -49,16 +49,18 @@ and concretise_dtype_params int_env type_env (dtype : data_type) : data_type =
                         fields
     in
     `Record fields'
-  | `Variant variants ->
+  | `Variant (dtype_opt, variants) ->
     let variants' = List.map
-            (fun (var_ident, var_dtype_opt) ->
+            (fun (var_ident, var_dtype_opt, var_val_opt) ->
               (
                 var_ident,
-                Option.map (concretise_dtype_params int_env type_env) var_dtype_opt
+                Option.map (concretise_dtype_params int_env type_env) var_dtype_opt,
+                var_val_opt
               ))
             variants
             in
-    `Variant variants'
+    let dtype_opt' = Option.map (concretise_dtype_params int_env type_env) dtype_opt in
+    `Variant (dtype_opt', variants')
   | `Tuple elems_dtypes ->
     let elems_dtypes' = List.map (concretise_dtype_params int_env type_env) elems_dtypes in
     `Tuple elems_dtypes'
@@ -127,3 +129,46 @@ let concretise_message params param_values (msg : Lang.message_def) =
     msg.sig_types
   in
   {msg with sig_types}
+
+
+let concretise_array_dimm params param_values (dimm : Lang.array_dimensions) : array_dimm_concrete =
+  let (int_param_env, _) = build_param_envs param_values params in
+  let mappings = ParamEnv.map_list (fun k v ->
+    Printf.sprintf "%s : %d\n" k v
+  ) int_param_env in
+  let mappings = String.concat "" mappings in
+
+  let get_concrete_params n = 
+    match ParamEnv.get_opt n with
+    | Some v -> v
+    | None -> failwith "Unreachable : Please report bug"
+  in
+  let rec concretise_dimm dimm =
+    match dimm with
+    | Lang.OneDim n ->
+      let n' = match concretise_and_get int_param_env n with
+        | Some v -> ParamEnv.Concrete v
+        | None ->
+          Printf.eprintf "[ERROR] Failed to concretise array dimension parameter: %s | Current Mappings = %s\n"
+            (match n with
+             | ParamEnv.Concrete i -> Printf.sprintf "Concrete(%d)" i
+             | ParamEnv.Param p -> Printf.sprintf "Param(%s)" p)
+            mappings;
+          failwith "Array dimension concretisation failed"
+      in
+      Lang.OneDimmension (get_concrete_params n')
+    | Lang.MultiDim (n, rest) ->
+      let rest' =  concretise_dimm rest in
+      let n' = match concretise_and_get int_param_env n with
+        | Some v -> ParamEnv.Concrete v
+        | None ->
+          Printf.eprintf "[ERROR] Failed to concretise array dimension parameter: %s | Current Mappings = %s\n"
+            (match n with
+             | ParamEnv.Concrete i -> Printf.sprintf "Concrete(%d)" i
+             | ParamEnv.Param p -> Printf.sprintf "Param(%s)" p)
+            mappings;
+          failwith "Array dimension concretisation failed"
+      in
+      Lang.MultiDimmension ((get_concrete_params n'), rest')
+  in
+  concretise_dimm dimm

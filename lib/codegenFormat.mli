@@ -17,6 +17,9 @@ val format_regname_current : string -> string
 val format_regname_next : string -> string
 val format_wire_maybe_const : WireCollection.wire MaybeConst.maybe_int_const -> string
 
+(** Extract the base name of an endpoint by removing array indices. *)
+val endpoint_base_name : Lang.identifier -> Lang.identifier
+
 (** When a pair of endpoints are instantiated within a process, the process has access to
 both of them although they merely mirror each other. This function {i canonicalises} a given endpoint
 name so in such cases both endpoints are transformed into the same name. *)

@@ -72,6 +72,11 @@ let ast_node_to_yojson f (n: 'a ast_node) = kind "ast_node" (
     | None, _ -> [dt; sp; def_spans]
   )
 
+let arbitrary_type_maybe_param_to_yojson typ_f param =
+    match param with
+    | ParamEnv.Param s -> assoc [("param", str s)]
+    | Concrete v -> assoc [("value", typ_f v)]
+
 let param_type_to_yojson (pt: param_type) = match pt with
   | IntParam -> str "int"
   | TypeParam -> str "type"
@@ -149,6 +154,43 @@ let endpoint_direction_to_yojson (d: endpoint_direction) = match d with
   | Right -> str "right"
 
 
+
+let literal_to_yojson (l: literal) = match l with
+  | Binary (len, bits) ->
+      kind "literal" [
+        ("type", str "binary");
+        ("length", int len);
+        ("digits", list (fun b -> int (value_of_digit b)) bits)
+      ]
+
+  | Decimal (len, digits) ->
+      kind "literal" [
+        ("type", str "decimal");
+        ("length", int len);
+        ("digits", list (fun d -> int (value_of_digit d)) digits)
+      ]
+
+  | Hexadecimal (len, digits) ->
+      kind "literal" [
+        ("type", str "hex");
+        ("length", int len);
+        ("digits", list (fun d -> int (value_of_digit d)) digits)
+      ]
+
+  | WithLength (len, v) ->
+      kind "literal" [
+        ("type", str "with_length");
+        ("length", int len);
+        ("value", int v)
+      ]
+
+  | NoLength v ->
+      kind "literal" [
+        ("type", str "no_length");
+        ("value", int v)
+      ]
+
+
 let rec data_type_to_yojson (x: data_type) = kind "data_type" (
   match x with
   | `Logic ->
@@ -158,11 +200,7 @@ let rec data_type_to_yojson (x: data_type) = kind "data_type" (
       [
         ("type", str "array");
         ("element", data_type_to_yojson dtype);
-        ("size",
-          match size with
-          | ParamEnv.Param s -> assoc [("param", str s)]
-          | Concrete v -> assoc [("value", int v)]
-        )
+        ("size", arbitrary_type_maybe_param_to_yojson int size)
       ]
 
   | `Tuple elems ->
@@ -182,15 +220,17 @@ let rec data_type_to_yojson (x: data_type) = kind "data_type" (
             ]) fields)
       ]
 
-  | `Variant ctors ->
+  | `Variant (opt_dt, elems) ->
       [
         ("type", str "variant");
-        ("constructors",
-          list (fun (id, opt_dt) ->
+        ("data_type", opt data_type_to_yojson opt_dt);
+        ("elements",
+          list (fun (id, opt_dt, opt_literal) ->
             assoc [
               ("name", identifier_to_yojson id);
-              ("element", opt data_type_to_yojson opt_dt)
-            ]) ctors)
+              ("data_type", opt data_type_to_yojson opt_dt);
+              ("literal", opt literal_to_yojson opt_literal);
+            ]) elems)
       ]
 
   | `Opaque id ->
@@ -218,6 +258,57 @@ and param_value_to_yojson (x: param_value) = kind "param_value" (
         ("type", str "type");
         ("data_type", data_type_to_yojson dt)
       ])
+
+
+let rec array_dimm_concrete_to_yojson x =
+  kind "array_dimensions_concrete" (
+    match x with
+    | OneDimmension n ->
+        [("type", str "one"); ("size", int n)]
+    | MultiDimmension (n, sub) ->
+        [("type", str "multi"); ("size", int n); ("sub", array_dimm_concrete_to_yojson sub)]
+  )
+
+let rec array_index_concrete_to_yojson x =
+  kind "array_index_concrete" (
+    match x with
+    | IndexSingle n ->
+        [
+          ("type", str "single");
+          ("index", int n)
+        ]
+    | IndexRange (start, size) ->
+        [
+          ("type", str "range");
+          ("start", int start);
+          ("size", int size)
+        ]
+    | IndexMultiDimRange (start, size, sub) ->
+        [
+          ("type", str "multi_range");
+          ("start", int start);
+          ("size", int size);
+          ("sub", array_index_concrete_to_yojson sub)
+        ]
+    | IndexMultiDimSingle (index, sub) ->
+        [
+          ("type", str "multi_single");
+          ("index", int index);
+          ("sub", array_index_concrete_to_yojson sub)
+        ]
+  )
+
+let rec array_dimensions_to_yojson x =
+  kind "array_dimensions" (
+    match x with
+    | OneDim dim ->
+        [("type", str "one");
+         ("size", arbitrary_type_maybe_param_to_yojson int dim)]
+    | MultiDim (dim, sub) ->
+        [("type", str "multi");
+         ("size", arbitrary_type_maybe_param_to_yojson int dim);
+         ("sub", array_dimensions_to_yojson sub)]
+  )
 
 
 let endpoint_def_to_yojson (e: endpoint_def) =
@@ -310,42 +401,6 @@ let channel_visibility_to_yojson (v: channel_visibility) = match v with
   | BothForeign -> str "both_foreign"
   | LeftForeign -> str "left_foreign"
   | RightForeign -> str "right_foreign"
-
-
-let literal_to_yojson (l: literal) = match l with
-  | Binary (len, bits) ->
-      kind "literal" [
-        ("type", str "binary");
-        ("length", int len);
-        ("digits", list (fun b -> int (value_of_digit b)) bits)
-      ]
-
-  | Decimal (len, digits) ->
-      kind "literal" [
-        ("type", str "decimal");
-        ("length", int len);
-        ("digits", list (fun d -> int (value_of_digit d)) digits)
-      ]
-
-  | Hexadecimal (len, digits) ->
-      kind "literal" [
-        ("type", str "hex");
-        ("length", int len);
-        ("digits", list (fun d -> int (value_of_digit d)) digits)
-      ]
-
-  | WithLength (len, v) ->
-      kind "literal" [
-        ("type", str "with_length");
-        ("length", int len);
-        ("value", int v)
-      ]
-
-  | NoLength v ->
-      kind "literal" [
-        ("type", str "no_length");
-        ("value", int v)
-      ]
 
 
 let channel_def_to_yojson (c: channel_def) =
@@ -636,11 +691,10 @@ and args_spawn_to_yojson (a: args_spawn) = kind "args_spawn" (
       ("type", str "single");
       ("endpoint", identifier_to_yojson id)
   ]
-  | RangeEp (id, start, size) -> [
-      ("type", str "range");
+  | IndexedEp (id, dims) -> [
+      ("type", str "indexed");
       ("endpoint", identifier_to_yojson id);
-      ("start", int start);
-      ("size", int size)
+      ("dimensions", array_index_concrete_to_yojson dims)
   ])
 
 let shared_var_def_to_yojson (s: shared_var_def) =
