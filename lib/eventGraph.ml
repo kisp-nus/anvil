@@ -32,7 +32,7 @@ type atomic_delay = [
   | `Sync of Lang.identifier (** synchronising on a local shared value *)
 ]
 
-type global_timed_data =
+type global_lowering_data =
 {
   mutable w : wire option;
   glt : Lang.sig_lifetime;
@@ -49,7 +49,7 @@ type lifetime = {
 (** Describe a sub-register range. *)
 and subreg_range = {
   subreg_name : Lang.identifier; (** name of the register *)
-  subreg_range_interval : timed_data MaybeConst.maybe_int_const * int;
+  subreg_range_interval : lowering_data MaybeConst.maybe_int_const * int;
     (** interval of the range (start, size) *)
 }
 
@@ -61,15 +61,19 @@ and reg_borrow = {
 }
 
 (** Data with a lifetime and potentially borrowing from a set of registers. *)
-and timed_data = {
+and lowering_data = {
   w : wire option; (** the {!type:wire} carrying the underlying raw data *)
   lt : lifetime; (** lifetime of the data *)
   reg_borrows : reg_borrow list; (** list of register borrows *)
   dtype : Lang.data_type;
 }
+
+and node_data = {
+  ld : lowering_data;
+}
 and shared_var_info = {
   assigning_thread : int;
-  value : global_timed_data;
+  value : global_lowering_data;
   mutable assigned_at : event option;
 }
 
@@ -81,17 +85,17 @@ and lvalue_info = {
 
 (** An action that is performed instantly when an event is reached. *)
 and action =
-  | DebugPrint of string * timed_data list (** debug print ([dprint]) *)
+  | DebugPrint of string * lowering_data list (** debug print ([dprint]) *)
   | DebugFinish (** [dfinish] *)
-  | RegAssign of lvalue_info * timed_data (** register assignment (technically this is not performed instantly) *)
-  | PutShared of string * shared_var_info * timed_data
-  | ImmediateSend of Lang.message_specifier * timed_data
+  | RegAssign of lvalue_info * lowering_data (** register assignment (technically this is not performed instantly) *)
+  | PutShared of string * shared_var_info * lowering_data
+  | ImmediateSend of Lang.message_specifier * lowering_data
   | ImmediateRecv of Lang.message_specifier
 
 (** Type of an action that may take multiple cycles. Those
 are basically those that synchronise through message passing. *)
 and sustained_action_type =
-  | Send of Lang.message_specifier * timed_data
+  | Send of Lang.message_specifier * lowering_data
   | Recv of Lang.message_specifier
 
 (** A condition.
@@ -102,7 +106,7 @@ The [then-] case is associated with a condition with [false] as {!neg}, whereas
 the [else-] case is associated with a condition with [true] as {!neg}.
 *)
 and condition = {
-  data : timed_data; (** the time data evaluated in the condition *)
+  data : lowering_data; (** the time data evaluated in the condition *)
   neg : bool; (** is the data negated? *)
 }
 
@@ -128,11 +132,11 @@ and event = {
 
 and branch_cond =
   | TrueFalse
-  | MatchCases of timed_data list
+  | MatchCases of lowering_data list
 
 (** Describes branching information. *)
 and branch_info = {
-  branch_cond_v : timed_data; (** the value used to decide branch *)
+  branch_cond_v : lowering_data; (** the value used to decide branch *)
   mutable branch_cond : branch_cond; (** conditions *)
   branch_count : int;
   mutable branches_to : event list;

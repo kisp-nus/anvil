@@ -136,7 +136,7 @@ val recurse_unfold_for_checks :
    EventGraph.cunit_info ->
    GraphBuildContext.Typing.build_context ->
    Lang.expr_node ->
-   EventGraph.timed_data) ->
+   EventGraph.node_data) ->
   EventGraph.cunit_info ->
   (Lang.identifier, EventGraph.shared_var_info) Hashtbl.t ->
   EventGraph.event_graph ->

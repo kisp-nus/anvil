@@ -20,11 +20,11 @@ let build_thread config ci shared_vars_info construct_graphIR (graph : event_gra
       let unrolled_e =
         GraphAnalysis.recurse_unfold_for_checks construct_graphIR ci shared_vars_info graph e
       in
-      let td = construct_graphIR tmp_graph ci
+      let td  = construct_graphIR tmp_graph ci
         (Typing.BuildContext.create_empty tmp_graph shared_vars_info true)
         unrolled_e in
       tmp_graph.last_event_id <- (EventGraphOps.find_last_event tmp_graph).id;
-      tmp_graph.is_general_recursive <- tmp_graph.last_event_id <> td.lt.live.id;
+      tmp_graph.is_general_recursive <- tmp_graph.last_event_id <> td.ld.lt.live.id;
       (* Optimise before lifetime check so the check sees the simplified graph *)
       let tmp_graph = GraphOpt.optimize config true ci tmp_graph in
       if not config.Config.disable_lt_checks then
@@ -41,9 +41,9 @@ let build_thread config ci shared_vars_info construct_graphIR (graph : event_gra
   | None ->
     (* discard after type checking *)
     let ctx = Typing.BuildContext.create_empty graph shared_vars_info false in
-    let td = construct_graphIR graph ci ctx e in
+    let td  = construct_graphIR graph ci ctx e in
     graph.last_event_id <- (EventGraphOps.find_last_event graph).id;
-    graph.is_general_recursive <- graph.last_event_id <> td.lt.live.id;
+    graph.is_general_recursive <- graph.last_event_id <> td.ld.lt.live.id;
     let g' = GraphOpt.optimize config false ci graph in
     GraphOpt.combinational_codegen config g' ci
 
