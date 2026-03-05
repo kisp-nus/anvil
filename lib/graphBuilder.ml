@@ -199,24 +199,27 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
     graph.wires <- wires';
     Typing.derived_data (Some w) td
   | Tuple [] -> Typing.const_data graph None (unit_dtype) ctx.current
-  | Let (_idents, _, e) -> construct_graphIR graph ci ctx e
+  | Let (_idents, _, e) ->
+    raise (Except.TypeError [Text "Let expressions cannot be unused!"; Except.codespan_local e.span])
   | Join (e1, e2) ->
-    let td1 = construct_graphIR graph ci ctx e1 in
     (
       match e1.d with
-      | Let (["_"],dtype ,_) -> 
+      | Let (["_"], dtype, inner_e) ->
+        let td1 = construct_graphIR graph ci ctx inner_e in
         let err_string = DTypeCheck.fmt_simple td1.dtype in
         check_dtype err_string dtype td1.dtype e1.span ci.file_name ci.weak_typecasts ci.typedefs ci.macro_defs;
         let td = construct_graphIR graph ci ctx e2 in
         let lt = Typing.lifetime_intersect graph td1.lt td.lt in
         {td with lt} (* forcing the bound value to be awaited *)
-      | Let ([], dtype, _) ->
+      | Let ([], dtype, inner_e) ->
+        let td1 = construct_graphIR graph ci ctx inner_e in
         let err_string = DTypeCheck.fmt_mismatch_opt ~context:"Invalid data type" ~expected:dtype ~got:td1.dtype in
         check_dtype err_string dtype td1.dtype e1.span ci.file_name ci.weak_typecasts ci.typedefs ci.macro_defs;
         let td = construct_graphIR graph ci ctx e2 in
         let lt = Typing.lifetime_intersect graph td1.lt td.lt in
         {td with lt} (* forcing the bound value to be awaited *)
-      | Let ([ident],dtype, _) ->
+      | Let ([ident], dtype, inner_e) ->
+          let td1 = construct_graphIR graph ci ctx inner_e in
           let err_string = DTypeCheck.fmt_let_binding ident dtype td1.dtype in
           check_dtype err_string dtype td1.dtype e1.span ci.file_name ci.weak_typecasts ci.typedefs ci.macro_defs;
           let ctx' = BuildContext.add_binding ctx ident td1 in
@@ -225,30 +228,36 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
           let binding = Typing.context_lookup ctx'.typing_ctx ident |> Option.get in
           (* no need to wait if the value is current *)
           if td1.lt.live.id <> ctx.current.id && not binding.binding_used then (
-            raise (event_graph_error_default "Value is potentially not awaited!" e1.span)
+            (* raise (event_graph_error_default "Value is potentially not awaited!" e1.span) *)
+            Printf.eprintf "[Warning] Value bound to %s is potentially not awaited!\n" ident;
+            (SpanPrinter.print_code_span ~indent:2 ~trunc:(-5) stderr ci.file_name e1.span)
+          ;
           );
           td
       | Let _ -> raise (event_graph_error_default "Discarding expression results!" e.span)
       | _ ->
+        let td1 = construct_graphIR graph ci ctx e1 in
         let td = construct_graphIR graph ci ctx e2 in
         let lt = Typing.lifetime_intersect graph td1.lt td.lt in
         {td with lt} (* forcing the bound value to be awaited *)
     )
   | Wait (e1, e2) ->
-    let td1 = construct_graphIR graph ci ctx e1 in
     (
       match e1.d with
-      | Let (["_"], dtype, _) ->
+      | Let (["_"], dtype, inner_e) ->
+        let td1 = construct_graphIR graph ci ctx inner_e in
         let err_string = DTypeCheck.fmt_simple td1.dtype in
         check_dtype err_string dtype td1.dtype e1.span ci.file_name ci.weak_typecasts ci.typedefs ci.macro_defs;
         let ctx' = BuildContext.wait graph ctx td1.lt.live in
         construct_graphIR graph ci ctx' e2
-      | Let ([], dtype, _) ->
+      | Let ([], dtype, inner_e) ->
+        let td1 = construct_graphIR graph ci ctx inner_e in
         let err_string = DTypeCheck.fmt_simple td1.dtype in
         check_dtype err_string dtype td1.dtype e1.span ci.file_name ci.weak_typecasts ci.typedefs ci.macro_defs;
         let ctx' = BuildContext.wait graph ctx td1.lt.live in
         construct_graphIR graph ci ctx' e2
-      | Let ([ident], dtype, _) ->
+      | Let ([ident], dtype, inner_e) ->
+        let td1 = construct_graphIR graph ci ctx inner_e in
         let err_string = DTypeCheck.fmt_let_binding ident dtype td1.dtype in
         check_dtype err_string dtype td1.dtype e.span ci.file_name ci.weak_typecasts ci.typedefs ci.macro_defs;
         (* add the binding to the context *)
@@ -257,6 +266,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
         construct_graphIR graph ci ctx' e2
       | Let _ -> raise (event_graph_error_default "Discarding expression results!" e.span)
       | _ ->
+        let td1 = construct_graphIR graph ci ctx e1 in
         let ctx' = BuildContext.wait graph ctx td1.lt.live in
         construct_graphIR graph ci ctx' e2
     )
