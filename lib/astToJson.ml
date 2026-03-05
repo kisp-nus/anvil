@@ -213,7 +213,7 @@ let rec data_type_to_yojson (x: data_type) = kind "data_type" (
       [
         ("type", str "record");
         ("fields",
-          list (fun (id, dt) ->
+          list_rev (fun (id, dt) ->
             assoc [
               ("name", identifier_to_yojson id);
               ("element", data_type_to_yojson dt)
