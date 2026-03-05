@@ -122,3 +122,23 @@ val event_is_msg_end : Lang.message_specifier -> EventGraph.event -> bool
 
 (** Returns the list of immediate predecessors. *)
 val imm_preds : EventGraph.event -> EventGraph.event list
+
+val recurse_unfold :
+  Lang.expr_node -> Lang.expr_node -> Lang.expr_node
+
+(** Unroll [expr_node] the minimum number of times required so that the body
+    latency exceeds the recursion gap, as computed by a lightweight dry-run of
+    [construct_graphIR] on a temporary graph.  [construct_graphIR] is the IR-building
+    traversal from {!GraphBuilder} and is accepted as a parameter to avoid a
+    circular module dependency. *)
+val recurse_unfold_for_checks :
+  (EventGraph.event_graph ->
+   EventGraph.cunit_info ->
+   GraphBuildContext.Typing.build_context ->
+   Lang.expr_node ->
+   EventGraph.timed_data) ->
+  EventGraph.cunit_info ->
+  (Lang.identifier, EventGraph.shared_var_info) Hashtbl.t ->
+  EventGraph.event_graph ->
+  Lang.expr_node ->
+  Lang.expr_node

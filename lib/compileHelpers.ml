@@ -50,7 +50,7 @@ let rec parse_recursive cunits parsed_files config filename =
     let cunit = {cunit with cunit_file_name = Some filename} in
     (
       try
-        GraphBuilder.syntax_tree_precheck config cunit
+        WellFormedCheck.syntax_tree_precheck config cunit
       with
         | Except.TypeError msg -> raise_compile_error (Some filename) msg
     );
