@@ -18,7 +18,7 @@ module Typing = struct
   type 'a context = 'a binding Utils.string_map
 
   type build_context = {
-    cg_lt_ctx : timed_data context;  (* To Do : We need to seperate codegen and lifetime contexts, but would cause aggressive changes as it flows down*)
+    cg_lt_ctx : lowering_data context;  (* To Do : We need to seperate codegen and lifetime contexts, but would cause aggressive changes as it flows down*)
     current : event;
     shared_vars_info : (identifier, shared_var_info) Hashtbl.t;
     lt_check_phase : bool;
@@ -67,27 +67,27 @@ module Typing = struct
       dead = Utils.list_unordered_join a.dead b.dead;
     }
 
-  let cycles_data g (n : int) (current : event) =
+  let cycles_data g (n : int) (current : event)  =
     let live_event = event_create g (`Seq (current, `Cycles n)) in
-    {w = None; lt = {live = live_event; dead = [(live_event, `Eternal)]}; reg_borrows = []; dtype = unit_dtype}
-  let sync_data g (current : event) (td: timed_data) =
+    {ld = {w = None; lt = {live = live_event; dead = [(live_event, `Eternal)]}; reg_borrows = []; dtype = unit_dtype}}
+  let sync_data g (current : event) (td: lowering_data) =
     let ev = event_create g (`Later (current, td.lt.live)) in
-    {td with lt = {td.lt with live = ev}}
+    {ld = {td with lt = {td.lt with live = ev}}}
 
-  let immediate_data _g (w : wire option) dtype (current : event) = {w; lt = lifetime_immediate current; reg_borrows = []; dtype}
-  let const_data _g (w : wire option) dtype (current : event) = {w; lt = lifetime_const current; reg_borrows = []; dtype}
-  let merged_data g (w : wire option) dtype (current : event) (tds : timed_data list) =
+  let immediate_data _g (w : wire option) dtype (current : event) = {ld = {w; lt = lifetime_immediate current; reg_borrows = []; dtype}}
+  let const_data _g (w : wire option) dtype (current : event) = {ld = {w; lt = lifetime_const current; reg_borrows = []; dtype}}
+  let merged_data g (w : wire option) dtype (current : event) (tds : lowering_data list) =
     let lts = List.map (fun x -> x.lt) tds in
     match lts with
     | [] -> const_data g w dtype current
     | lt::lts' ->
       let lt' = List.fold_left (lifetime_intersect g) lt lts' in
       let reg_borrows' = List.concat_map (fun x -> x.reg_borrows) tds in
-      {w; lt = lt'; reg_borrows = reg_borrows'; dtype}
-  let derived_data (w : wire option) (td : timed_data) = {td with w}
+      {ld = {w; lt = lt'; reg_borrows = reg_borrows'; dtype}}
+  let derived_data (w : wire option) (td : lowering_data) = {ld = {td with w}}
   let send_msg_data g (msg : message_specifier) (current : event) =
     let live_event = event_create g (`Seq (current, `Send msg)) in
-    {w = None; lt = {live = live_event; dead = [(live_event, `Eternal)]}; reg_borrows = []; dtype = unit_dtype}
+    {ld = {w = None; lt = {live = live_event; dead = [(live_event, `Eternal)]}; reg_borrows = []; dtype = unit_dtype}}
 
   let sync_event_data g ident gtd current =
     let event_synced = event_create g (`Seq (current, `Sync ident)) in
@@ -97,18 +97,18 @@ module Typing = struct
       | `Cycles _ -> ()
       | _ -> raise (Except.UnimplementedError [Text "Non-static lifetime for shared data is unsupported!"])
     );
-    {w = gtd.w; lt = {live = event_synced; dead = [(event_synced, dpat)]}; reg_borrows = []; dtype = gtd.gdtype}
+    {ld = {w = gtd.w; lt = {live = event_synced; dead = [(event_synced, dpat)]}; reg_borrows = []; dtype = gtd.gdtype}}
 
   let recv_msg_data g (w : wire option) (msg : message_specifier) (msg_def : message_def) (current : event) =
     let event_received = event_create g (`Seq (current, `Recv msg)) in
     let stype = List.hd msg_def.sig_types in
     let e = delay_pat_globalise msg.endpoint stype.lifetime.e in
-    {w; lt = {live = event_received; dead = [(event_received, e)]}; reg_borrows = []; dtype = stype.dtype}
+    {ld = {w; lt = {live = event_received; dead = [(event_received, e)]}; reg_borrows = []; dtype = stype.dtype}}
 
-  let context_add (ctx : timed_data context) (v : identifier) (d : timed_data) (s : Lang.def_span) : timed_data context =
+  let context_add (ctx : lowering_data context) (v : identifier) (d : lowering_data) (s : Lang.def_span) : lowering_data context =
     Utils.StringMap.add v {binding_val = d; binding_used = false; binding_def_span = s} ctx
   let context_empty = Utils.StringMap.empty
-  let context_lookup (ctx : timed_data context) (v : identifier) = Utils.StringMap.find_opt v ctx
+  let context_lookup (ctx : lowering_data context) (v : identifier) = Utils.StringMap.find_opt v ctx
   (* checks if lt lives at least as long as required *)
 
   let context_clear_used =
@@ -125,7 +125,7 @@ module Typing = struct
 
     let clear_bindings (ctx : t) : t =
       {ctx with cg_lt_ctx = context_empty}
-    let add_binding (ctx : t) (v : identifier) (d : timed_data) (s : Lang.def_span) : t =
+    let add_binding (ctx : t) (v : identifier) (d : lowering_data) (s : Lang.def_span) : t =
       {ctx with cg_lt_ctx = context_add ctx.cg_lt_ctx v d s}
     let wait g (ctx : t) (other : event) : t =
       {ctx with current = event_create g (`Later (ctx.current, other))}

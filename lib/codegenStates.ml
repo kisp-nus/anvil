@@ -210,7 +210,7 @@ let codegen_next printer (graphs : EventGraph.event_graph_collection)
               List.to_seq br_side_info.owner_branch.branches_to
               |> Seq.take (br_side_info.owner_branch.branch_count - 1)
             in
-            Seq.iter2 (fun (td_pat : EventGraph.timed_data) (br_to : EventGraph.event) ->
+            Seq.iter2 (fun (td_pat : EventGraph.lowering_data) (br_to : EventGraph.event) ->
               let wp = Option.get td_pat.w in
               CodegenPrinter.print_line ~lvl_delta_post:1 printer
                 @@ Printf.sprintf "%s:" @@ CodegenFormat.format_wirename wp.thread_id wp.id;
@@ -253,7 +253,7 @@ let codegen_actions printer (g : EventGraph.event_graph) =
         | DebugPrint (s, tds) ->
           Printf.sprintf "$display(\"%s\"%s);"
             s
-            (List.map (fun (td : timed_data) ->
+            (List.map (fun (td : lowering_data) ->
               let w = Option.get td.w in
               Printf.sprintf ", %s" @@ CodegenFormat.format_wirename w.thread_id w.id) tds |>
             String.concat "") |> print_line

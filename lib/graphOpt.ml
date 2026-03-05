@@ -390,7 +390,7 @@ module CombSimplPass = struct
           live = replace_event lt.live;
           dead = replace_event_pat lt.dead;
         }
-      and replace_timed_data td =
+      and replace_lowering_data td =
         {td with
           lt = replace_lifetime td.lt;
           reg_borrows = List.map (fun borrow ->
@@ -407,30 +407,30 @@ module CombSimplPass = struct
       in
       let replace_lvalue_info lval_info =
         let range_fst = match fst lval_info.lval_range.subreg_range_interval with
-        | MaybeConst.NonConst td -> MaybeConst.NonConst (replace_timed_data td)
+        | MaybeConst.NonConst td -> MaybeConst.NonConst (replace_lowering_data td)
         | _ -> fst lval_info.lval_range.subreg_range_interval in
         let range = (range_fst, snd lval_info.lval_range.subreg_range_interval) in
         {lval_info with lval_range = {lval_info.lval_range with subreg_range_interval = range}}
       in
       let replace_sa_type = function
-        | Send (msg, td) -> Send (msg, replace_timed_data td)
+        | Send (msg, td) -> Send (msg, replace_lowering_data td)
         | Recv msg -> Recv msg
       in
       let replace_branch_cond = function
         | TrueFalse -> TrueFalse
         | MatchCases cases ->
-          MatchCases (List.map replace_timed_data cases)
+          MatchCases (List.map replace_lowering_data cases)
       in
 
       let merge_event old_id ev =
         let actions = List.map (fun (action: action Lang.ast_node) ->
           let d = match action.d with
-          | DebugPrint (s, td_list) -> DebugPrint (s, List.map replace_timed_data td_list)
-          | RegAssign (lval_info, td) -> RegAssign (replace_lvalue_info lval_info, replace_timed_data td)
-          | PutShared (s, svi, td) -> PutShared (s, svi, replace_timed_data td)
+          | DebugPrint (s, td_list) -> DebugPrint (s, List.map replace_lowering_data td_list)
+          | RegAssign (lval_info, td) -> RegAssign (replace_lvalue_info lval_info, replace_lowering_data td)
+          | PutShared (s, svi, td) -> PutShared (s, svi, replace_lowering_data td)
           | DebugFinish -> DebugFinish
           | ImmediateRecv msg -> ImmediateRecv msg
-          | ImmediateSend (msg, td) -> ImmediateSend (msg, replace_timed_data td)
+          | ImmediateSend (msg, td) -> ImmediateSend (msg, replace_lowering_data td)
           in
           {action with d}
         ) ev.actions in
@@ -443,7 +443,7 @@ module CombSimplPass = struct
         ) ev.sustained_actions in
         let replace_branch_info br_info =
           {
-            branch_cond_v = replace_timed_data br_info.branch_cond_v;
+            branch_cond_v = replace_lowering_data br_info.branch_cond_v;
             branch_cond = replace_branch_cond br_info.branch_cond;
             branch_count = br_info.branch_count;
             branches_to = List.map replace_event br_info.branches_to;
