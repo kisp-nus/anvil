@@ -306,6 +306,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
     let msg = MessageCollection.lookup_message graph.messages msg_spec ci.channel_classes
       |> unwrap_or_err "Invalid message specifier in ready" e.span in
     AstAnnotator.attach_def_from_code_span e msg.span (Some ci.file_name);
+    AstAnnotator.attach_event e ctx.current None;
     (* if msg.dir <> In then (
       (* mismatching direction *)
       raise (event_graph_error_default "Mismatching message direction!" e.span)
@@ -317,10 +318,14 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
     let msg = MessageCollection.lookup_message graph.messages msg_spec ci.channel_classes
     |> unwrap_or_err "Invalid message specifier in probe" e.span in
     AstAnnotator.attach_def_from_code_span e msg.span (Some ci.file_name);
+    AstAnnotator.attach_event e ctx.current None;
     let wires, msg_ack_port = WireCollection.add_msg_ack_port graph.thread_id ci.typedefs msg_spec graph.wires in
     graph.wires <- wires;
     Typing.immediate_data graph (Some msg_ack_port) `Logic ctx.current
-  | Cycle n -> Typing.cycles_data graph n ctx.current
+  | Cycle n ->
+    let data = Typing.cycles_data graph n ctx.current in
+    AstAnnotator.attach_event e ctx.current None;
+    data
   | IfExpr (e1, e2, e3) ->
     let td1 = construct_graphIR graph ci ctx e1 in
     (* TODO: type checking *)
@@ -343,6 +348,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
     branch_info.branches_val <- [td2.ld.lt.live; td3.ld.lt.live];
 
     BuildContext.branch_merge ctx' [ctx_true; ctx_false];
+    AstAnnotator.attach_event e ctx.current None;
 
     let ctx_br = BuildContext.branch graph ctx' branch_info in
     br_side_true.branch_event <- Some ctx_br.current;
@@ -604,6 +610,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
       | false -> `Array (List.hd tdtype, ParamEnv.Concrete (List.length es))
       | _ -> `Array (`Logic, ParamEnv.Concrete (w.size))
     ) in
+    AstAnnotator.attach_event e ctx.current None;
     List.map (fun (_,td) -> td.ld) tds |> Typing.merged_data graph (Some w) new_dtype ctx.current
   |  Read rlval ->
     let reg_ident = Lang.get_lvalue_reg_id rlval in
@@ -677,6 +684,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
         if not all_w then
           raise (Except.TypeError [Text "Invalid value in debug print"; Except.codespan_local e.span]);
         ctx.current.actions <- (let open EventGraph in DebugPrint (s, List.map (fun td -> td.ld) timed_ws) |> tag_with_span e.span)::ctx.current.actions;
+        AstAnnotator.attach_event e ctx.current None;
         {ld = {w = None; lt = EventGraphOps.lifetime_const ctx.current; reg_borrows = []; dtype = unit_dtype}}
       | DebugFinish ->
         ctx.current.actions <- (let open EventGraph in tag_with_span e.span DebugFinish)::ctx.current.actions;
