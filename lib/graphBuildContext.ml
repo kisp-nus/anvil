@@ -5,8 +5,8 @@ open Lang
 
 module Typing = struct
   
-  type binding = {
-    binding_val : timed_data;
+  type 'a binding  = {
+    binding_val : 'a;
     mutable binding_used : bool; (** if the binding has been used (to enforce relevance) *)
   }
 
@@ -14,10 +14,10 @@ module Typing = struct
     binding.binding_used <- true;
     binding.binding_val
 
-  type context = binding Utils.string_map
+  type 'a context = 'a binding Utils.string_map
 
   type build_context = {
-    typing_ctx : context;
+    cg_lt_ctx : timed_data context;  (* To Do : We need to seperate codegen and lifetime contexts, but would cause aggressive changes as it flows down*)
     current : event;
     shared_vars_info : (identifier, shared_var_info) Hashtbl.t;
     lt_check_phase : bool;
@@ -104,10 +104,10 @@ module Typing = struct
     let e = delay_pat_globalise msg.endpoint stype.lifetime.e in
     {w; lt = {live = event_received; dead = [(event_received, e)]}; reg_borrows = []; dtype = stype.dtype}
 
-  let context_add (ctx : context) (v : identifier) (d : timed_data) : context =
+  let context_add (ctx : timed_data context) (v : identifier) (d : timed_data) : timed_data context =
     Utils.StringMap.add v {binding_val = d; binding_used = false} ctx
-  let context_empty : context = Utils.StringMap.empty
-  let context_lookup (ctx : context) (v : identifier) = Utils.StringMap.find_opt v ctx
+  let context_empty = Utils.StringMap.empty
+  let context_lookup (ctx : timed_data context) (v : identifier) = Utils.StringMap.find_opt v ctx
   (* checks if lt lives at least as long as required *)
 
   let context_clear_used =
@@ -116,16 +116,16 @@ module Typing = struct
   module BuildContext = struct
     type t = build_context
     let create_empty g si lt_check_phase: t = {
-      typing_ctx = context_empty;
+      cg_lt_ctx = context_empty;
       current = event_create g (`Root None);
       shared_vars_info = si;
       lt_check_phase;
     }
 
     let clear_bindings (ctx : t) : t =
-      {ctx with typing_ctx = context_empty}
+      {ctx with cg_lt_ctx = context_empty}
     let add_binding (ctx : t) (v : identifier) (d : timed_data) : t =
-      {ctx with typing_ctx = context_add ctx.typing_ctx v d}
+      {ctx with cg_lt_ctx = context_add ctx.cg_lt_ctx v d}
     let wait g (ctx : t) (other : event) : t =
       {ctx with current = event_create g (`Later (ctx.current, other))}
 
@@ -133,7 +133,7 @@ module Typing = struct
     let branch_side g (ctx : t) (bi : branch_info) (sel : int) : branch_side_info * t  =
       let br_side_info = {branch_event = None; owner_branch = bi; branch_side_sel = sel} in
       let event_side_root = event_create g (`Root (Some (ctx.current, br_side_info))) in
-      (br_side_info, {ctx with current = event_side_root; typing_ctx = context_clear_used ctx.typing_ctx})
+      (br_side_info, {ctx with current = event_side_root; cg_lt_ctx = context_clear_used ctx.cg_lt_ctx})
 
     let branch g (ctx : t) (br_info : branch_info) : t =
       {ctx with current = event_create g (`Branch (ctx.current, br_info))}
@@ -145,11 +145,11 @@ module Typing = struct
       Utils.StringMap.iter (fun ident r ->
         if r.binding_used
             && (List.for_all
-                (fun ctx2 -> (Utils.StringMap.find ident ctx2.typing_ctx).binding_used)
+                (fun ctx2 -> (Utils.StringMap.find ident ctx2.cg_lt_ctx).binding_used)
                other_ctxs) then (
-          (Utils.StringMap.find ident ctx.typing_ctx).binding_used <- true
+          (Utils.StringMap.find ident ctx.cg_lt_ctx).binding_used <- true
         )
-      ) ctx1.typing_ctx
+      ) ctx1.cg_lt_ctx
   end
 
 

@@ -113,7 +113,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
       Typing.sync_event_data graph ident shared_info.value ctx.current
     )
   | Identifier ident ->
-      let ctx_val = Typing.context_lookup ctx.typing_ctx ident in
+      let ctx_val = Typing.context_lookup ctx.cg_lt_ctx ident in
       let macro_val = List.assoc_opt ident (List.map (fun (macro : macro_def) ->(macro.id, macro.value)) ci.macro_defs) in
       (match ctx_val, macro_val with
         | Some _, Some _ ->
@@ -127,7 +127,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
             graph.wires <- wires';
             Typing.const_data graph (Some w) (`Array (`Logic, ParamEnv.Concrete sz)) ctx.current
         | None, None ->
-          Typing.context_lookup ctx.typing_ctx ident
+          Typing.context_lookup ctx.cg_lt_ctx ident
           |> unwrap_or_err ("Undefined identifier: " ^ ident) e.span
           |> Typing.use_binding |> Typing.sync_data graph ctx.current
       )
@@ -225,7 +225,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
           let ctx' = BuildContext.add_binding ctx ident td1 in
           let td = construct_graphIR graph ci ctx' e2 in
           (* check if the binding is used *)
-          let binding = Typing.context_lookup ctx'.typing_ctx ident |> Option.get in
+          let binding = Typing.context_lookup ctx'.cg_lt_ctx ident |> Option.get in
           (* no need to wait if the value is current *)
           if td1.lt.live.id <> ctx.current.id && not binding.binding_used then (
             (* raise (event_graph_error_default "Value is potentially not awaited!" e1.span) *)
