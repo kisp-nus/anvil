@@ -54,20 +54,21 @@ let _check config cunits =
         | Some cc -> AstAnnotator.attach_def_from_top_level_channel_class chan cc
         | _ -> ()
       in
-      match proc.body with
-      | Native body -> List.iter (fun chan -> annotate_chan_chan_cls_def chan) body.channels
-      | Extern _ -> ();
+      (match proc.body with
+        | Native body -> List.iter (fun chan -> annotate_chan_chan_cls_def chan) body.channels
+        | Extern _ -> ()
+      );
 
       (* annotate spawn defs with their proc definitions *)
-      (* TODO: This doesn't seem to work *)
       let annotate_spawn_proc_def (spawn: Lang.spawn_def Lang.ast_node) =
         match List.assoc_opt spawn.d.proc proc_lookup_table with
-        | Some proc_def -> AstAnnotator.attach_def_from_top_level_proc spawn proc_def
+        | Some proc_def -> AstAnnotator.attach_def_from_top_level_proc spawn proc_def;
         | None -> AstAnnotator.attach_def_from_code_span spawn spawn.span None
       in
-      match proc.body with
-      | Native body -> List.iter (fun spawn -> annotate_spawn_proc_def spawn) body.spawns
-      | Extern _ -> ();
+      (match proc.body with
+        | Native body -> List.iter (fun spawn -> annotate_spawn_proc_def spawn) body.spawns
+        | Extern _ -> ()
+      );
     in
 
     List.iter (fun (_, proc) -> annotate_proc_def proc) all_procs;
