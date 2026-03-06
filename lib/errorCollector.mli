@@ -41,6 +41,9 @@ val dedup_collected_errors : unit -> unit
 (** Pushes a new error into the list of collected errors. *)
 val push_new_error : exn -> unit
 
+(** Applies a mapping function to all collected errors, replacing each error with the result of the function. *)
+val map_collected_errors : (exn -> exn) -> unit
+
 (** Retrieves the list of collected errors. *)
 val get_collected_errors : unit -> exn list
 

@@ -37,6 +37,9 @@ let dedup_collected_errors () =
 let push_new_error (e: exn) : unit =
   _global_errors := e :: !_global_errors
 
+let map_collected_errors (f: exn -> exn) : unit =
+  _global_errors := List.map (fun e -> f e) !_global_errors
+
 let get_collected_errors () : exn list =
   !_global_errors
 

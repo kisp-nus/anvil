@@ -109,13 +109,17 @@ let _check config cunits =
             procs = [proc]; imports = []; _extern_procs = [];
             func_defs = all_func_defs;
             macro_defs = all_macro_defs} in
-          let graph_collection =
+          let graph_collection = (
             match GraphBuildDriver.build config sched task.module_name task.param_values cunit
             with
             | res -> res
             | exception exc ->
                 raise (convert_intermediate_anvil_errors exc (Some file_name))
-          in
+          ) in
+
+          ErrorCollector.map_collected_errors (fun e ->
+            convert_intermediate_anvil_errors e (Some file_name)
+          );
           Queue.add graph_collection graph_collection_queue
       )
     )

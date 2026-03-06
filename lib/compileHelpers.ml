@@ -79,13 +79,17 @@ let rec parse_recursive cunits parsed_files (config : Config.compile_config) fil
       with
         | Except.TypeError msg -> raise_compile_error (Some filename) msg
     );
+    ErrorCollector.map_collected_errors (fun e ->
+      convert_intermediate_anvil_errors e (Some filename)
+    );
     cunits := (filename, cunit)::!cunits;
     List.iter (fun imp ->
       let open Lang in
       if not imp.is_extern then
         canonicalise_file_name filename imp.file_name
           |> parse_recursive cunits parsed_files config
-    ) cunit.imports
+    ) cunit.imports;
+
   )
 
 
