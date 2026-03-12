@@ -9,6 +9,11 @@ let to_code_span (def_span : Lang.def_span) : Lang.code_span =
 let eq (a: Lang.code_span) (b: Lang.def_span) : bool = a.st = b.st && a.ed = b.ed
 let eq_strict (a: Lang.code_span) (af: string option) (b: Lang.def_span) : bool = a.st = b.st && a.ed = b.ed && af = b.cunit
 
+let merge_def_spans (extra: Lang.def_span list) (base: Lang.def_span list) : Lang.def_span list =
+  let append item base =
+    if List.exists ((=) item) base then base
+    else item :: base
+  in List.fold_right append extra base
 
 (** attaches the compilation unit filename to all top-level scoped definitions within the given target compilation unit *)
 let attach_def_cunit_fname (target : Lang.compilation_unit) =
@@ -39,23 +44,32 @@ let attach_def_cunit_fname (target : Lang.compilation_unit) =
 
 
 (** Scoped definition helpers **)
+(**
+   Dev Notes:
+
+   All definition information should be attached from the closest source node first.
+
+   For example, if x has definition y which has definition z, and z's definition is useful to x,
+   then x should have y attached first before z.
+  *)
 
 (** attaches definition information to the target (1st arg) from the source (2nd arg) from the given source compilation unit filename (3rd arg) *)
 let attach_def_span_expr (target : 'a Lang.ast_node) (source : 'b Lang.ast_node) (source_cunit_fname: string option) =
-  if not (List.exists (eq_strict source.span source_cunit_fname) target.def_span) then
-    let source_def_span = to_def_span source.span source_cunit_fname in
-    target.def_span <- List.append (source_def_span :: source.def_span) target.def_span
+  let base_def_span = source.def_span in
+  let source_def_span = to_def_span source.span source_cunit_fname in
+  let target_def_span = target.def_span in
+
+  let merged_def_span = merge_def_spans [source_def_span] base_def_span |> merge_def_spans target_def_span in
+  target.def_span <- merged_def_span
 
 (** attaches definition information to the target (1st arg) from the source code span (2nd arg) from the given source compilation unit filename (3rd arg) *)
 let attach_def_from_code_span (target : 'a Lang.ast_node) (source_span : Lang.code_span) (source_cunit_fname: string option) =
-  if not (List.exists (eq_strict source_span source_cunit_fname) target.def_span) then
-    let source_def_span = to_def_span source_span source_cunit_fname in
-    target.def_span <- source_def_span :: target.def_span
+  let source_def_span = to_def_span source_span source_cunit_fname in
+  target.def_span <- merge_def_spans [source_def_span] target.def_span
 
 (** attaches definition information to the target (1st arg) from the source def span (2nd arg) *)
 let attach_def_span (target : 'a Lang.ast_node) (source_span : Lang.def_span) =
-  if not (List.exists ((=) source_span) target.def_span) then
-    target.def_span <- source_span :: target.def_span
+  target.def_span <- merge_def_spans [source_span] target.def_span
 
 
 
@@ -63,48 +77,46 @@ let attach_def_span (target : 'a Lang.ast_node) (source_span : Lang.def_span) =
 
 (** attaches definition information to the target (1st arg) from the source top-level channel_class_def (2nd arg) *)
 let attach_def_from_top_level_channel_class (target : 'a Lang.ast_node) (source : Lang.channel_class_def) =
-  if not (List.exists (eq_strict source.span source.cunit_file_name) target.def_span) then
-    let source_def_span = to_def_span source.span source.cunit_file_name in
-    target.def_span <- List.append (source_def_span :: target.def_span) target.def_span
+  let source_def_span = to_def_span source.span source.cunit_file_name in
+  target.def_span <- merge_def_spans [source_def_span] target.def_span
 
 (** attaches definition information to the target (1st arg) from the source top-level type_def (2nd arg) *)
 let attach_def_from_top_level_type (target : 'a Lang.ast_node) (source : Lang.type_def) =
-  if not (List.exists (eq_strict source.span source.cunit_file_name) target.def_span) then
-    let source_def_span = to_def_span source.span source.cunit_file_name in
-    target.def_span <- List.append (source_def_span :: target.def_span) target.def_span
+  let source_def_span = to_def_span source.span source.cunit_file_name in
+  target.def_span <- merge_def_spans [source_def_span] target.def_span
 
 (** attaches definition information to the target (1st arg) from the source top-level macro_def (2nd arg) *)
 let attach_def_from_top_level_macro (target : 'a Lang.ast_node) (source : Lang.macro_def) =
-  if not (List.exists (eq_strict source.span source.cunit_file_name) target.def_span) then
-    let source_def_span = to_def_span source.span source.cunit_file_name in
-    target.def_span <- List.append (source_def_span :: target.def_span) target.def_span
+  let source_def_span = to_def_span source.span source.cunit_file_name in
+  target.def_span <- merge_def_spans [source_def_span] target.def_span
 
 (** attaches definition information to the target (1st arg) from the source top-level func_def (2nd arg) *)
 let attach_def_from_top_level_func (target : 'a Lang.ast_node) (source : Lang.func_def) =
-  if not (List.exists (eq_strict source.span source.cunit_file_name) target.def_span) then
-    let source_def_span = to_def_span source.span source.cunit_file_name in
-    target.def_span <- List.append (source_def_span :: target.def_span) target.def_span
+  let source_def_span = to_def_span source.span source.cunit_file_name in
+  target.def_span <- merge_def_spans [source_def_span] target.def_span
 
 (** attaches definition information to the target (1st arg) from the source top-level proc_def (2nd arg) *)
 let attach_def_from_top_level_proc (target : 'a Lang.ast_node) (source : Lang.proc_def) =
-  if not (List.exists (eq_strict source.span source.cunit_file_name) target.def_span) then
-    let source_def_span = to_def_span source.span source.cunit_file_name in
-    target.def_span <- List.append (source_def_span :: target.def_span) target.def_span
+  let source_def_span = to_def_span source.span source.cunit_file_name in
+  target.def_span <- merge_def_spans [source_def_span] target.def_span
 
 (** attaches definition information to the target (1st arg) from the source top-level message_def (2nd arg) *)
 let attach_def_from_top_level_message (target : 'a Lang.ast_node) (source : Lang.message_def) (spec: Lang.message_specifier) (graph: EventGraph.event_graph) =
-  if not (List.exists (eq_strict source.span source.cunit_file_name) target.def_span) then
-    let source_def_span = to_def_span source.span source.cunit_file_name in
-    target.def_span <- List.append (source_def_span :: target.def_span) target.def_span;
-
   let ep = spec.endpoint in
   let located_defs =
     let is_match (e : Lang.endpoint_def) = e.name = ep in
     List.find_opt is_match (graph.messages.endpoints @ graph.messages.args)
-    in match located_defs with
+  in
+  (
+    match located_defs with
     | Some ep ->
       attach_def_from_code_span target ep.span (source.cunit_file_name);
     | _ -> ()
+  );
+
+  let source_def_span = to_def_span source.span source.cunit_file_name in
+  target.def_span <- merge_def_spans [source_def_span] target.def_span
+
 
 (** attaches definition information to the fields (1st arg) from the source top-level type_def (2nd arg) *)
 let attach_def_from_top_level_type_fields (target_fields: (Lang.identifier * 'a Lang.ast_node) list) (source : Lang.type_def) =

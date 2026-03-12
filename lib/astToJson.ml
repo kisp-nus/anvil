@@ -63,7 +63,7 @@ let ast_node_to_yojson f (n: 'a ast_node) = kind "ast_node" (
         [ ("tid", int tid); ("eid", int eid); ("to_eid", int sustained_to_eid) ]
       | None -> `Null
     ) in
-    let def_spans = ("def_span", list def_span_to_yojson n.def_span) in
+    let def_spans = ("def_span", list_rev def_span_to_yojson n.def_span) in
 
     match n.action_event, n.def_span with
     | Some _, [] -> [dt; sp; eid]
