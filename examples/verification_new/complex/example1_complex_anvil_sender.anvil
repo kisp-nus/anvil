@@ -1,0 +1,19 @@
+
+chan ch {
+    left req: (logic[8]@#3),
+    left req2: (logic[8]@#4) @#1 - @dyn
+}
+
+proc example1_complex_anvil_sender(ep: right ch) {
+    reg r : logic[8];
+    reg r2 : logic[8];
+    loop {
+        set r := *r + 8'b1 >>
+        set r2 := *r2 + 8'b1 >>
+        dprint "Data Send = %d" (*r);
+        dprint "Data 2 Send = %d" (*r2);
+        send ep.req (*r) >>
+        send ep.req2 (*r2) >>
+        cycle 2
+    }
+}
