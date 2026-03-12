@@ -183,8 +183,8 @@ let dtype_of_literal (lit : literal) =
 type data_type = [
   | `Logic
   | `Array of data_type * int maybe_param
-  | `Variant of (data_type option)*(identifier * (data_type option)*(literal option)) list (** ADT sum type *)
-  | `Record of (identifier * data_type) list (** ADT product type *)
+  | `Variant of (data_type option) * ((identifier * (data_type option) * (literal option)) ast_node list) (** ADT sum type *)
+  | `Record of (identifier * data_type) ast_node list (** ADT product type *)
   | `Tuple of data_type list
   | `Opaque of identifier (** type reserved for internal purposes *)
   | `Named of identifier * param_value list (** named type which can be concretised
@@ -252,22 +252,23 @@ and type_def = {
 let unit_dtype = `Tuple []
 
 (** Number of bits required to hold the tag for a variant type. *)
-let variant_tag_size (v: [>`Variant of (data_type option)*((identifier * (data_type option)*(literal option)) list)]) : int =
+let variant_tag_size (v: [>`Variant of (data_type option)*((identifier * (data_type option)*(literal option)) ast_node list)]) : int =
   match v with
   | `Variant (_, vlist) -> List.length vlist |> Utils.int_log2
 
 (** Data type a variant type constructor. *)
-let variant_lookup_dtype (v: [> `Variant of (data_type option)*((identifier * (data_type option) * (literal option)) list)]) (cstr: identifier) : data_type option =
+let variant_lookup_dtype (v: [> `Variant of (data_type option)*((identifier * (data_type option) * (literal option)) ast_node list)]) (cstr: identifier) : data_type option =
     match v with
     | `Variant (_, vlist) ->
-      List.find_opt (fun (x,_dt,_vl) -> x = cstr) vlist |> Option.map (fun (_,dt,_) -> dt) |> Option.join
+      List.find_opt (fun n -> let (x,_dt,_vl) = n.d in x = cstr) vlist |> Option.map (fun n -> let (_,dt,_) = n.d in dt) |> Option.join
 
 (** Index of a variant type constructor. *)
-let variant_lookup_index (v: [> `Variant of (data_type option)*((identifier * (data_type option) * (literal option)) list)]) (cstr: identifier) : int option =
+let variant_lookup_index (v: [> `Variant of (data_type option)*((identifier * (data_type option) * (literal option)) ast_node list)]) (cstr: identifier) : int option =
   let res : int option ref = ref None in
   match v with
   | `Variant (_,vlist) ->
-      List.iteri (fun i (x,_,v) ->
+      List.iteri (fun i n -> 
+        let (x,_,v) = n.d in
         if Option.is_none !res then begin
           if x = cstr then
             if Option.is_none v then
@@ -631,14 +632,16 @@ and string_of_data_type (dtype : data_type) : string =
     in
     "Array[" ^ n' ^ "] (" ^ string_of_data_type d ^ ")"
   | `Variant (_, (id_opt_list)) ->
-      "Variant (" ^ String.concat ", " (List.map (fun (id, dt_opt, val_opt) ->
+      "Variant (" ^ String.concat ", " (List.map (fun node ->
+        let (id, dt_opt, val_opt) = node.d in
         match (dt_opt, val_opt) with
         | (Some dt, None) -> id ^ ": " ^ string_of_data_type dt
         | (None, Some lit) -> id ^ ": " ^ string_of_literal lit
         | (Some dt, Some lit) -> id ^ ": " ^ string_of_data_type dt ^ " = " ^ string_of_literal lit
         | (None, None) -> id) id_opt_list) ^ ")"
   | `Record fields ->
-      "Record (" ^ String.concat ", " (List.map (fun (field_name, field_type) ->
+      "Record (" ^ String.concat ", " (List.map (fun node ->
+        let field_name, field_type = node.d in
         field_name ^ ": " ^ string_of_data_type field_type) fields) ^ ")"
   | `Tuple dt_list ->
     (

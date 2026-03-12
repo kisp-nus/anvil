@@ -782,9 +782,10 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
       match TypedefMap.data_type_name_resolve ci.typedefs @@ `Named (record_ty_name, []) with
       | Some (`Record record_fields) ->
         (
-          match Utils.list_match_reorder (List.map fst record_fields) field_exprs with
+          match Utils.list_match_reorder (List.map (fun n -> fst n.d) record_fields) field_exprs with
           | Some expr_reordered ->
-            let tds = List.map2 (fun (field_name, expected_dtype) e' ->
+            let tds = List.map2 (fun n e' ->
+              let field_name, expected_dtype = n.d in
               let td = construct_graphIR graph ci ctx e' in
               let err_string = DTypeCheck.fmt_record_field field_name expected_dtype td.ld.dtype in
               check_dtype err_string (Some expected_dtype) td.ld.dtype e'.span ci.file_name ci.weak_typecasts ci.typedefs ci.macro_defs;

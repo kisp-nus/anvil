@@ -212,12 +212,14 @@ let rec data_type_to_yojson (x: data_type) = kind "data_type" (
   | `Record fields ->
       [
         ("type", str "record");
-        ("fields",
-          list_rev (fun (id, dt) ->
+        ("elements",
+          list_rev (ast_node_to_yojson (fun (id, dt) ->
             assoc [
+              ("kind", str "type_element_def");
               ("name", identifier_to_yojson id);
-              ("element", data_type_to_yojson dt)
-            ]) fields)
+              ("data_type", data_type_to_yojson dt)
+            ])
+          ) fields)
       ]
 
   | `Variant (opt_dt, elems) ->
@@ -225,12 +227,14 @@ let rec data_type_to_yojson (x: data_type) = kind "data_type" (
         ("type", str "variant");
         ("data_type", opt data_type_to_yojson opt_dt);
         ("elements",
-          list (fun (id, opt_dt, opt_literal) ->
+          list (ast_node_to_yojson (fun (id, opt_dt, opt_literal) ->
             assoc [
+              ("kind", str "type_element_def");
               ("name", identifier_to_yojson id);
               ("data_type", opt data_type_to_yojson opt_dt);
               ("literal", opt literal_to_yojson opt_literal);
-            ]) elems)
+            ])
+          ) elems)
       ]
 
   | `Opaque id ->
@@ -541,8 +545,8 @@ and expr_to_yojson (x: expr) = let result = match x with
   | Record (ty_name, fields, eo) -> [
       ("type", str "record");
       ("type_name", identifier_to_yojson ty_name);
-      ("fields", list (fun (id, e) ->
-          kind "field" [
+      ("elements", list (fun (id, e) ->
+          assoc [
             ("id", identifier_to_yojson id);
             ("value", expr_node_to_yojson e)
           ]

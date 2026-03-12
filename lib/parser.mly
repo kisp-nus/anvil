@@ -252,17 +252,17 @@ type_def:
     { name = name; body = dtype; params = Option.value ~default:[] params; span = {st = $startpos; ed = $endpos}; cunit_file_name = None } : Lang.type_def
   }
 | KEYWORD_ENUM; name = IDENT; params = param_list?;
-  LEFT_BRACE; variants = separated_nonempty_list(COMMA, variant_def); RIGHT_BRACE
+  LEFT_BRACE; variants = separated_nonempty_list(COMMA, node(variant_def)); RIGHT_BRACE
   {
     { name = name; body = `Variant (None,variants); params = Option.value ~default:[] params; span = {st = $startpos; ed = $endpos}; cunit_file_name = None } : Lang.type_def
   }
 | KEYWORD_ENUM; name = IDENT; dtype = data_type; params = param_list?;
-  LEFT_BRACE; variants = separated_nonempty_list(COMMA, variant_def); RIGHT_BRACE
+  LEFT_BRACE; variants = separated_nonempty_list(COMMA, node(variant_def)); RIGHT_BRACE
   {
     { name = name; body = `Variant (Some dtype, variants); params = Option.value ~default:[] params; span = {st = $startpos; ed = $endpos}; cunit_file_name = None } : Lang.type_def
   }
 | KEYWORD_STRUCT; name = IDENT; params = param_list?;
-  LEFT_BRACE; fields = separated_nonempty_list(COMMA, field_def); RIGHT_BRACE
+  LEFT_BRACE; fields = separated_nonempty_list(COMMA, node(field_def)); RIGHT_BRACE
   {
     { name = name; body = `Record (List.rev fields); params = Option.value ~default:[] params; span = {st = $startpos; ed = $endpos}; cunit_file_name = None } : Lang.type_def
   }

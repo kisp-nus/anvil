@@ -44,19 +44,24 @@ and concretise_dtype_params int_env type_env (dtype : data_type) : data_type =
       let params' = concretise_params int_env type_env params in
       `Named (ident, params')
   | `Record fields ->
-    let fields' = List.map (fun (field_ident, field_dtype) ->
-                        (field_ident, concretise_dtype_params int_env type_env field_dtype))
-                        fields
+    let fields' = List.map (fun node ->
+      let (field_ident, field_dtype) = node.d in
+      let new_data = (field_ident, concretise_dtype_params int_env type_env field_dtype) in
+      {
+        node with d = new_data
+      }
+    ) fields
     in
     `Record fields'
   | `Variant (dtype_opt, variants) ->
     let variants' = List.map
-            (fun (var_ident, var_dtype_opt, var_val_opt) ->
-              (
+            (fun node ->
+              let (var_ident, var_dtype_opt, var_val_opt) = node.d in
+              { node with d = (
                 var_ident,
                 Option.map (concretise_dtype_params int_env type_env) var_dtype_opt,
                 var_val_opt
-              ))
+              )})
             variants
             in
     let dtype_opt' = Option.map (concretise_dtype_params int_env type_env) dtype_opt in
@@ -73,7 +78,8 @@ let build_param_envs param_values params =
   and params_s = List.to_seq params in
   Seq.zip vals_s params_s
     |> Seq.iter
-      (fun (v, p) ->
+      (fun n ->
+        let (v, p) = n in
         match v, p.param_ty with
         | IntParamValue n, IntParam ->
           add_value p.param_name n int_env
