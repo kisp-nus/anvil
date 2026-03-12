@@ -566,7 +566,7 @@ expr:
   { Lang.Cycle n }
 | e = node(expr); LEFT_BRACKET; ind = index; RIGHT_BRACKET
   { Lang.Index (e, ind) }
-| e = node(expr); PERIOD; fieldname = IDENT
+| e = node(expr); PERIOD; fieldname = node(IDENT)
   { Lang.Indirect (e, fieldname) }
 | SHARP; LEFT_BRACE; components = separated_list(COMMA, node(expr)); RIGHT_BRACE
   { Lang.Concat (components, false) }
@@ -712,7 +712,7 @@ un_expr:
 lvalue:
 | regname = IDENT
   { Lang.Reg regname }
-| lval = lvalue; PERIOD; fieldname = IDENT
+| lval = lvalue; PERIOD; fieldname = node(IDENT)
   { Lang.Indirected (lval, fieldname) }
 | lval = lvalue; LEFT_BRACKET; ind = index; RIGHT_BRACKET
   { Lang.Indexed (lval, ind) }

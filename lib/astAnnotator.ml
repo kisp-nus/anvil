@@ -106,12 +106,8 @@ let attach_def_from_top_level_message (target : 'a Lang.ast_node) (source : Lang
       attach_def_from_code_span target ep.span (source.cunit_file_name);
     | _ -> ()
 
-
-(** attaches definition information to the target (1st arg) from the source top-level type_def (2nd arg) *)
-let attach_def_from_top_level_type_with_fields (target : 'a Lang.ast_node) (source : Lang.type_def) (fields: (Lang.identifier * 'b Lang.ast_node) list) =
-
-  attach_def_from_top_level_type target source;
-
+(** attaches definition information to the fields (1st arg) from the source top-level type_def (2nd arg) *)
+let attach_def_from_top_level_type_fields (target_fields: (Lang.identifier * 'a Lang.ast_node) list) (source : Lang.type_def) =
   let record_fields = match source.body with
     | `Record fields -> List.map (fun (n: 'c Lang.ast_node) -> (fst n.d, n)) fields
     | _ -> []
@@ -131,9 +127,15 @@ let attach_def_from_top_level_type_with_fields (target : 'a Lang.ast_node) (sour
   )
   in
 
-  List.iter (annotator record_fields) fields;
-  List.iter (annotator variant_fields) fields;
+  List.iter (annotator record_fields) target_fields;
+  List.iter (annotator variant_fields) target_fields;
   ()
+
+(** attaches definition information to the target (1st arg) from the source top-level type_def (2nd arg) and its fields (3rd arg) *)
+let attach_def_from_top_level_type_with_fields (target : 'a Lang.ast_node) (source : Lang.type_def) (fields: (Lang.identifier * 'b Lang.ast_node) list) =
+  attach_def_from_top_level_type target source;
+  attach_def_from_top_level_type_fields fields source
+
 
 
 (** Event helpers **)

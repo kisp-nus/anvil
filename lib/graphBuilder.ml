@@ -99,17 +99,18 @@ let rec lvalue_info_of graph (ci:cunit_info) ctx (e:expr_node) lval =
   | Indirected (lval', fieldname) ->
     let lval_info' = lvalue_info_of graph ci ctx e lval' in
     let (le', _len') = lval_info'.lval_range.subreg_range_interval in
-    let (le, len, dtype) = TypedefMap.data_type_indirect ci.typedefs ci.macro_defs lval_info'.lval_dtype fieldname
-      |> unwrap_or_err ("Invalid lvalue indirection through field " ^ fieldname) span in
+    let (le, len, dtype) = TypedefMap.data_type_indirect ci.typedefs ci.macro_defs lval_info'.lval_dtype fieldname.d
+      |> unwrap_or_err ("Invalid lvalue indirection through field " ^ fieldname.d) span in
     let le'_nd = MaybeConst.map (fun ld -> {ld}) le' in
     let le_n = MaybeConst.map (fun nd -> nd.ld)
       (MaybeConst.add_const le (binop_td_const Add) le'_nd)
     in
     (
-      let type_def = TypedefMap.type_def_name_resolve ci.typedefs dtype in
-      match type_def with
-      | Some type_def -> AstAnnotator.attach_def_from_top_level_type e type_def
-      | None -> ()
+      let type_def = TypedefMap.type_def_name_resolve ci.typedefs dtype in (
+        match type_def with
+        | Some type_def -> AstAnnotator.attach_def_from_top_level_type_with_fields e type_def [(fieldname.d, fieldname)]
+        | None -> ()
+      );
     );
     {
       lval_range = {lval_info'.lval_range with subreg_range_interval = (le_n, len)};
@@ -609,7 +610,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
   |  Read rlval ->
     let reg_ident = Lang.get_lvalue_reg_id rlval in
     let r = Utils.StringMap.find_opt reg_ident graph.regs
-      |> unwrap_or_err ("Undefined register " ^ reg_ident) e.span in    
+      |> unwrap_or_err ("Undefined register " ^ reg_ident) e.span in
     AstAnnotator.attach_def_span_expr e r (Some ci.file_name);
     let (wires'', w'') = WireCollection.add_reg_read graph.thread_id ci.typedefs ci.macro_defs r.d graph.wires in
     graph.wires <- wires'';
@@ -619,6 +620,13 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
         | Reg _ -> (dt,in_off,le,w,td')
         | Indexed (lv, idx) ->
           let inner_info = lvalue_info_of graph ci ctx e lv in
+          (
+            let type_def = TypedefMap.type_def_name_resolve ci.typedefs inner_info.lval_dtype in
+            match type_def with
+            | Some type_def ->
+                AstAnnotator.attach_def_from_top_level_type e type_def
+            | None -> ()
+          );
           let inner_le = fst inner_info.lval_range.subreg_range_interval in
           let inner_le_nd = MaybeConst.map (fun ld -> {ld}) inner_le in
           let inner_dtype = inner_info.lval_dtype in
@@ -641,15 +649,22 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
           (dt', off, le', w', new_td)
         | Indirected (lval_inner, field_id) -> 
           let lval_info_inner = lvalue_info_of graph ci ctx e lval_inner in
+          (
+            let type_def = TypedefMap.type_def_name_resolve ci.typedefs lval_info_inner.lval_dtype in
+            match type_def with
+            | Some type_def ->
+                AstAnnotator.attach_def_from_top_level_type_with_fields e type_def [(field_id.d, field_id)]
+            | None -> ()
+          );
           let (inner_le, _inner_len) = lval_info_inner.lval_range.subreg_range_interval in
           let inner_le_nd = MaybeConst.map (fun ld -> {ld}) inner_le in
-          let (field_offset_le, len, new_dtype) = TypedefMap.data_type_indirect ci.typedefs ci.macro_defs lval_info_inner.lval_dtype field_id
-            |> unwrap_or_err (Printf.sprintf "Invalid indirection %s" field_id) e.span in
+          let (field_offset_le, len, new_dtype) = TypedefMap.data_type_indirect ci.typedefs ci.macro_defs lval_info_inner.lval_dtype field_id.d
+            |> unwrap_or_err (Printf.sprintf "Invalid indirection %s" field_id.d) e.span in
           (* total offset = inner offset + field offset *)
           let total_offset_le = MaybeConst.add_const field_offset_le (binop_td_const e.span Add) inner_le_nd in
           let off_i = MaybeConst.map_off total_offset_le in
           let (off, le') = if off_i < 0 then (
-            Printf.eprintf "[Warning] The offset is not a constant value for indirection %s, borrowing full range\n" field_id;
+            Printf.eprintf "[Warning] The offset is not a constant value for indirection %s, borrowing full range\n" field_id.d;
             (0, len)
           ) else (off_i, len) in
           let (wi', new_w) = WireCollection.add_slice graph.thread_id w (MaybeConst.map (fun td -> unwrap_or_err "Invalid indexing in indirection" e.span td.ld.w) total_offset_le) le' graph.wires in
@@ -739,12 +754,12 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
       let type_def = TypedefMap.type_def_name_resolve ci.typedefs td.ld.dtype in
       match type_def with
       | Some type_def ->
-          AstAnnotator.attach_def_from_top_level_type_with_fields e type_def [(fieldname, e')]
+          AstAnnotator.attach_def_from_top_level_type_with_fields e' type_def [(fieldname.d, fieldname)]
       | None -> ()
     );
     let w = unwrap_or_err "Invalid value in indirection" e'.span td.ld.w in
-    let (offset_le, len, new_dtype) = TypedefMap.data_type_indirect ci.typedefs ci.macro_defs td.ld.dtype fieldname
-      |> unwrap_or_err (Printf.sprintf "Invalid indirection %s" fieldname) e.span in
+    let (offset_le, len, new_dtype) = TypedefMap.data_type_indirect ci.typedefs ci.macro_defs td.ld.dtype fieldname.d
+      |> unwrap_or_err (Printf.sprintf "Invalid indirection %s" fieldname.d) e.span in
     let (wires', new_w) = WireCollection.add_slice graph.thread_id w (Const offset_le) len graph.wires in
     graph.wires <- wires';
     {ld = {

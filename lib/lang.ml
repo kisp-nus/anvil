@@ -437,7 +437,7 @@ and expr =
   | Construct of constructor_spec * expr_node option (** construct a variant type value with a constructor *)
   | Record of identifier * (identifier * expr_node) ast_node list * expr_node option (** constructing a record-type value *)
   | Index of expr_node * index (** an element of an array ([a[3]]) *)
-  | Indirect of expr_node * identifier (** a member of a record ([a.b]) *)
+  | Indirect of expr_node * identifier ast_node (** a member of a record ([a.b]) *)
   | Concat of expr_node list * bool
   | Cast of expr_node * data_type (** cast an expression to a specific data type *)
   | Ready of message_specifier (** [ready(a, b)] *)
@@ -456,7 +456,7 @@ and expr_node = expr ast_node
 and lvalue =
   | Reg of identifier (** a register *)
   | Indexed of lvalue * index (** lvalue[index] *)
-  | Indirected of lvalue * identifier (** lvalue.field *)
+  | Indirected of lvalue * identifier ast_node (** lvalue.field *)
 
 (** Indexing, either a single point or a range. *)
 and index =
@@ -615,7 +615,7 @@ and string_of_lvalue (lv : lvalue) : string =
   match lv with
   | Reg id -> "Reg " ^ id
   | Indexed (lv, idx) -> "Indexed (" ^ string_of_lvalue lv ^ ", " ^ string_of_index idx ^ ")"
-  | Indirected (lv, id) -> "Indirected (" ^ string_of_lvalue lv ^ ", " ^ id ^ ")"
+  | Indirected (lv, id) -> "Indirected (" ^ string_of_lvalue lv ^ ", " ^ id.d ^ ")"
 
 and string_of_index (idx : index) : string =
   match idx with

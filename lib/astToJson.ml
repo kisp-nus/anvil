@@ -561,7 +561,7 @@ and expr_to_yojson (x: expr) = let result = match x with
   | Indirect (e, field) -> [
       ("type", str "indirect");
       ("expr", expr_node_to_yojson e);
-      ("field", identifier_to_yojson field)
+      ("field", ast_node_to_yojson identifier_to_yojson field)
     ]
   | Concat (elist, flat) -> [
       ("type", str "concat");
@@ -630,7 +630,7 @@ and lvalue_to_yojson (x: lvalue) = let result = match x with
   | Indirected (lv, field) -> [
       ("type", str "indirected");
       ("lvalue", lvalue_to_yojson lv);
-      ("field", identifier_to_yojson field)
+      ("field", ast_node_to_yojson identifier_to_yojson field)
     ]
   in kind "lvalue" result
 
