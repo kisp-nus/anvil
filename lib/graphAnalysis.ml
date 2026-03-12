@@ -611,7 +611,7 @@ let rec recurse_unfold expr_full_node expr_node =
       Construct (cs, Option.map unfold e')
     | Record (ident, vs, base) ->
       Record (ident,
-        List.map (fun (i, e) -> (i, unfold e)) vs,
+        List.map (fun n -> let (i, e) = n.d in { n with d = (i, unfold e) }) vs,
         Option.map unfold base
       )
     | Index (e', idx) ->

@@ -735,17 +735,18 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
 
   | Indirect (e', fieldname) ->
     let td = construct_graphIR graph ci ctx e' in
+    (
+      let type_def = TypedefMap.type_def_name_resolve ci.typedefs td.ld.dtype in
+      match type_def with
+      | Some type_def ->
+          AstAnnotator.attach_def_from_top_level_type_with_fields e type_def [(fieldname, e')]
+      | None -> ()
+    );
     let w = unwrap_or_err "Invalid value in indirection" e'.span td.ld.w in
     let (offset_le, len, new_dtype) = TypedefMap.data_type_indirect ci.typedefs ci.macro_defs td.ld.dtype fieldname
       |> unwrap_or_err (Printf.sprintf "Invalid indirection %s" fieldname) e.span in
     let (wires', new_w) = WireCollection.add_slice graph.thread_id w (Const offset_le) len graph.wires in
     graph.wires <- wires';
-    (
-      let type_def = TypedefMap.type_def_name_resolve ci.typedefs td.ld.dtype in
-      match type_def with
-      | Some type_def -> AstAnnotator.attach_def_from_top_level_type e type_def
-      | None -> ()
-    );
     {ld = {
       td.ld with
       w = Some new_w;
@@ -774,7 +775,9 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
   | Record (record_ty_name, field_exprs, None) ->
     (
       match TypedefMap.type_def_name_resolve ci.typedefs @@ `Named (record_ty_name, []) with
-      | Some type_def -> AstAnnotator.attach_def_from_top_level_type e type_def
+      | Some type_def ->
+          let field_exprs_flattened = List.map (fun n -> let (ident, _) = n.d in (ident, n)) field_exprs in
+          AstAnnotator.attach_def_from_top_level_type_with_fields e type_def field_exprs_flattened
       | None -> ()
     );
 
@@ -782,7 +785,9 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
       match TypedefMap.data_type_name_resolve ci.typedefs @@ `Named (record_ty_name, []) with
       | Some (`Record record_fields) ->
         (
-          match Utils.list_match_reorder (List.map (fun n -> fst n.d) record_fields) field_exprs with
+          match Utils.list_match_reorder
+            (List.map (fun n -> fst n.d) record_fields)
+            (List.map (fun n -> n.d) field_exprs) with
           | Some expr_reordered ->
             let tds = List.map2 (fun n e' ->
               let field_name, expected_dtype = n.d in
@@ -807,13 +812,15 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
   | Record (record_ty_name, field_exprs, Some field_base) ->
       (
         match TypedefMap.type_def_name_resolve ci.typedefs @@ `Named (record_ty_name, []) with
-        | Some type_def -> AstAnnotator.attach_def_from_top_level_type e type_def
+        | Some type_def ->
+            let field_exprs_flattened = List.map (fun n -> let (ident, _) = n.d in (ident, n)) field_exprs in
+            AstAnnotator.attach_def_from_top_level_type_with_fields e type_def field_exprs_flattened
         | None -> ()
       );
 
       (* record update *)
       let td_base = construct_graphIR graph ci ctx field_base in
-      let tds = List.map (fun (field_ident, e') -> (field_ident, e', construct_graphIR graph ci ctx e')) field_exprs in
+      let tds = List.map (fun n -> let (field_ident, e') = n.d in (field_ident, e', construct_graphIR graph ci ctx e')) field_exprs in
       let updates =
         (* bruteforce *)
         List.map (fun (field_ident, _e', td) ->
@@ -828,10 +835,15 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
       Typing.merged_data graph (Some w) (`Named (record_ty_name, [])) ctx.current (td_base.ld::(List.map (fun (_, _, td) -> td.ld) tds))
   | Construct (cstr_spec, cstr_expr_opt) ->
     (
+      match TypedefMap.type_def_name_resolve ci.typedefs @@ `Named (cstr_spec.variant_ty_name, []) with
+      | Some type_def -> AstAnnotator.attach_def_from_top_level_type_with_fields e type_def [(cstr_spec.variant.d, cstr_spec.variant)]
+      | None -> ()
+    );
+    (
       match TypedefMap.data_type_name_resolve ci.typedefs @@ `Named (cstr_spec.variant_ty_name, []) with
       | Some (`Variant (dtype_opt, variants)) ->
         let variant_val = `Variant (dtype_opt, variants) in
-        let e_dtype_opt = variant_lookup_dtype variant_val cstr_spec.variant in
+        let e_dtype_opt = variant_lookup_dtype variant_val cstr_spec.variant.d in
         (
           match e_dtype_opt, cstr_expr_opt with
           | Some e_dtype, Some cstr_expr ->
@@ -842,8 +854,8 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
             let tag_size = variant_tag_size variant_val
             and data_size = TypedefMap.data_type_size ci.typedefs ci.macro_defs e_dtype
             and tot_size = TypedefMap.data_type_size ci.typedefs ci.macro_defs variant_val
-            and var_idx = variant_lookup_index variant_val cstr_spec.variant
-              |> unwrap_or_err ("Invalid constructor: " ^ cstr_spec.variant) e.span in
+            and var_idx = variant_lookup_index variant_val cstr_spec.variant.d
+              |> unwrap_or_err ("Invalid constructor: " ^ cstr_spec.variant.d) e.span in
             let (wires', w_tag) = WireCollection.add_literal graph.thread_id ci.typedefs ci.macro_defs
               (WithLength (tag_size, var_idx)) graph.wires in
             let (wires', new_w) = if tot_size = tag_size + data_size then
@@ -860,8 +872,8 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
           | None, None ->
             let tag_size = variant_tag_size variant_val
             and tot_size = TypedefMap.data_type_size ci.typedefs ci.macro_defs variant_val
-            and var_idx = variant_lookup_index variant_val cstr_spec.variant
-              |> unwrap_or_err ("Invalid constructor: " ^ cstr_spec.variant) e.span in
+            and var_idx = variant_lookup_index variant_val cstr_spec.variant.d
+              |> unwrap_or_err ("Invalid constructor: " ^ cstr_spec.variant.d) e.span in
             let (wires', w_tag) = WireCollection.add_literal graph.thread_id ci.typedefs ci.macro_defs
               (WithLength (tag_size, var_idx)) graph.wires in
             let (wires', new_w) = if tot_size = tag_size then

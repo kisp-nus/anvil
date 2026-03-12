@@ -412,7 +412,7 @@ and recv_pack = {
 }
 and constructor_spec = {
   variant_ty_name: identifier;
-  variant: identifier;
+  variant: identifier ast_node;
 }
 (** A message type. This is a pair of the message type name and the direction. *)
 
@@ -435,7 +435,7 @@ and expr =
   | TryRecv of identifier * recv_pack * expr_node * expr_node (** try recv *)
   | TrySend of send_pack * expr_node * expr_node (** try send *)
   | Construct of constructor_spec * expr_node option (** construct a variant type value with a constructor *)
-  | Record of identifier * (identifier * expr_node) list * expr_node option (** constructing a record-type value *)
+  | Record of identifier * (identifier * expr_node) ast_node list * expr_node option (** constructing a record-type value *)
   | Index of expr_node * index (** an element of an array ([a[3]]) *)
   | Indirect of expr_node * identifier (** a member of a record ([a.b]) *)
   | Concat of expr_node list * bool
@@ -697,8 +697,9 @@ let rec substitute_expr_identifier (id: identifier) (value: expr_node) (idx : in
   | Record (name, fields, base) ->
       Record (
         name,
-        List.map (fun (field_name, field_expr) ->
-          (field_name, subst field_expr)
+        List.map (fun n ->
+          let (field_name, field_expr) = n.d in
+          { n with d = (field_name, subst field_expr) }
         ) fields,
         Option.map subst base
       )

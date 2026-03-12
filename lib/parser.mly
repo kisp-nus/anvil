@@ -584,11 +584,11 @@ expr:
   { Lang.Construct (constructor_spec, e) }
 | record_name = IDENT; DOUBLE_COLON; LEFT_BRACE;
   base = node(expr); KEYWORD_WITH;
-  record_fields = separated_nonempty_list(SEMICOLON, record_field_constr);
+  record_fields = separated_nonempty_list(SEMICOLON, node(record_field_constr));
   RIGHT_BRACE
   { Lang.Record (record_name, record_fields, Some base) }
 | record_name = IDENT; DOUBLE_COLON; LEFT_BRACE;
-  record_fields = separated_nonempty_list(SEMICOLON, record_field_constr);
+  record_fields = separated_nonempty_list(SEMICOLON, node(record_field_constr));
   RIGHT_BRACE
   { Lang.Record (record_name, record_fields, None) }
   (* debug operations *)
@@ -633,7 +633,7 @@ else_branch:
 ;
 
 constructor_spec:
-  ty = IDENT; DOUBLE_COLON; variant = IDENT
+  ty = IDENT; DOUBLE_COLON; variant = node(IDENT)
   { let open Lang in {variant_ty_name = ty; variant} }
 ;
 %inline record_field_constr:

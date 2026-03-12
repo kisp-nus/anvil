@@ -107,7 +107,33 @@ let attach_def_from_top_level_message (target : 'a Lang.ast_node) (source : Lang
     | _ -> ()
 
 
+(** attaches definition information to the target (1st arg) from the source top-level type_def (2nd arg) *)
+let attach_def_from_top_level_type_with_fields (target : 'a Lang.ast_node) (source : Lang.type_def) (fields: (Lang.identifier * 'b Lang.ast_node) list) =
 
+  attach_def_from_top_level_type target source;
+
+  let record_fields = match source.body with
+    | `Record fields -> List.map (fun (n: 'c Lang.ast_node) -> (fst n.d, n)) fields
+    | _ -> []
+  in
+
+  let variant_fields = match source.body with
+    | `Variant (_, variants) -> List.map (fun (n: 'd Lang.ast_node) -> let id, _, _ = n.d in (id, n)) variants
+    | _ -> []
+  in
+
+  let annotator def_fields = (fun (field_ident, field_expr) ->
+    match (List.assoc_opt field_ident def_fields) with
+    | Some field_type_data ->
+        attach_def_from_top_level_type field_expr source;
+        attach_def_span_expr field_expr field_type_data source.cunit_file_name
+    | None -> ()
+  )
+  in
+
+  List.iter (annotator record_fields) fields;
+  List.iter (annotator variant_fields) fields;
+  ()
 
 
 (** Event helpers **)

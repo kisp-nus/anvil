@@ -463,7 +463,7 @@ and recv_pack_to_yojson (rp: recv_pack) =
 and constructor_spec_to_yojson (cs: constructor_spec) =
   kind "constructor_spec" [
     ("type_name", identifier_to_yojson cs.variant_ty_name);
-    ("constructor", identifier_to_yojson cs.variant)
+    ("name", ast_node_to_yojson identifier_to_yojson cs.variant)
   ]
 
 and expr_to_yojson (x: expr) = let result = match x with
@@ -539,18 +539,18 @@ and expr_to_yojson (x: expr) = let result = match x with
     ]
   | Construct (cs, eo) -> [
       ("type", str "construct");
-      ("constructor_spec", constructor_spec_to_yojson cs);
+      ("spec", constructor_spec_to_yojson cs);
       ("arg", (match eo with Some e -> expr_node_to_yojson e | None -> `Null))
     ]
   | Record (ty_name, fields, eo) -> [
       ("type", str "record");
       ("type_name", identifier_to_yojson ty_name);
-      ("elements", list (fun (id, e) ->
+      ("elements", list (ast_node_to_yojson (fun (id, e) ->
           assoc [
             ("id", identifier_to_yojson id);
             ("value", expr_node_to_yojson e)
           ]
-      ) fields);
+      )) fields);
       ("base", (match eo with Some e -> expr_node_to_yojson e | None -> `Null))
     ]
   | Index (e, idx) -> [
