@@ -12,6 +12,7 @@ let compile_with_json_output config =
   end else begin
     let temp_file = Filename.temp_file "anvil_output" ".sv" in
     try
+      Anvil.AstAnnotator.enabled := config.ast_output;
       if config.ast_output then
         let cunits, gcols, errors = Anvil.CompileDriver.parse config in
         let json_errors =
