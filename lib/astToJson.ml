@@ -778,7 +778,7 @@ let func_def_to_yojson (f: func_def) =
 
 (* Functions for conversion of important EventGraph constructs to Yojson *)
 
-let event_graph_collection_to_yojson (gc: EventGraph.event_graph_collection) : Yojson.Safe.t =
+let event_graph_collection_to_yojson (gc: EventGraph.event_graph_collection): Yojson.Safe.t list =
 
   let event_graph_to_order (t: EventGraph.event_graph) =
     let events = t.events in
@@ -813,7 +813,7 @@ let event_graph_collection_to_yojson (gc: EventGraph.event_graph_collection) : Y
   in
 
   let procs = gc.event_graphs in
-  list proc_graph_to_order procs
+  List.map proc_graph_to_order procs
 
 
 
@@ -832,13 +832,9 @@ let compilation_unit_with_supplementary_data_to_yojson (c: compilation_unit) (sd
   ] @ sd)
 
 
-let compilation_unit_with_event_graph_to_yojson (c: compilation_unit) (gc: EventGraph.event_graph_collection option) =
-  let events_json = match gc with
-    | Some g -> event_graph_collection_to_yojson g
-    | None -> `Null
-  in
-  compilation_unit_with_supplementary_data_to_yojson c [("event_graphs", events_json)]
-
+let compilation_unit_with_event_graph_to_yojson (c: compilation_unit) (gcl: EventGraph.event_graph_collection list) =
+  let event_graphs = List.map (fun gc -> event_graph_collection_to_yojson gc) gcl |> List.concat in
+  compilation_unit_with_supplementary_data_to_yojson c [("event_graphs", `List event_graphs)]
 
 let compilation_unit_to_yojson (c: compilation_unit) =
   compilation_unit_with_supplementary_data_to_yojson c []
