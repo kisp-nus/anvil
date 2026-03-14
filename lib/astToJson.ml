@@ -2,6 +2,16 @@
 
 open Lang
 
+let ast_major_version = 0 (* incr w/ breaking changes *)
+let ast_minor_version = 1 (* incr w/ non-breaking additions *)
+let ast_patch_version = 0 (* incr w/ non-breaking bug fixes *)
+let ast_wip_build = 1 (* incr w/ each build while in wip state; set to 0 when finalized *)
+
+let ast_json_schema_version_string =
+  let wip_str = if ast_wip_build > 0 then Printf.sprintf "-wip.%d" ast_wip_build else "" in
+  Printf.sprintf "v%d.%d.%d%s" ast_major_version ast_minor_version ast_patch_version wip_str
+
+
 (* Helper functions for constructing Yojson values *)
 
 let assoc l = `Assoc l
@@ -821,6 +831,7 @@ let event_graph_collection_to_yojson (gc: EventGraph.event_graph_collection): Yo
 
 let compilation_unit_with_supplementary_data_to_yojson (c: compilation_unit) (sd: (string * Yojson.Safe.t) list) =
   kind "compilation_unit" ([
+    ("schema", str ast_json_schema_version_string);
     ("file_name", opt str c.cunit_file_name);
     ("channel_classes", list channel_class_def_to_yojson c.channel_classes);
     ("type_defs", list type_def_to_yojson c.type_defs);
