@@ -128,7 +128,7 @@ module CombSimplPass = struct
     assert (Dynarray.length event_ufs = n);
     let add_event source =
       let new_ev = {actions = []; sustained_actions = []; source; id = graph.last_event_id + 1;
-        is_recurse = false;
+        is_recurse = false; expr_nodes = [];
         outs = []; graph; preds = Utils.IntSet.empty; removed = false } in
       graph.last_event_id <- new_ev.id;
       graph.events <- new_ev::graph.events;
@@ -422,6 +422,27 @@ module CombSimplPass = struct
           MatchCases (List.map replace_lowering_data cases)
       in
 
+      (* Update both eid and ueid in action_event on annotated AST nodes to
+         reflect event renumbering/merging within this optimization pass.
+         target_eid is the new event id that owns this node (differs for
+         kept vs merged-away events).
+         For ueid, we use the union-find directly on the old ueid rather than
+         going through the mutated event_arr_old, since renumbering already
+         overwrote entries in event_arr_old with new IDs. *)
+      let update_node_ast_annotator_action_event target_eid (node : _ Lang.ast_node) =
+        match node.action_event with
+        | Some (tid, _eid, Some ueid) when ueid >= 0 && ueid < Array.length event_arr_old ->
+          let f = find_ufs event_ufs ueid in
+          let new_ueid =
+            if f >= 0 && to_keep.(f) then Some event_arr_old.(f).id
+            else Some ueid (* keep original if target not found *)
+          in
+          node.action_event <- Some (tid, target_eid, new_ueid)
+        | Some (tid, _eid, ueid) ->
+          node.action_event <- Some (tid, target_eid, ueid)
+        | None -> ()
+      in
+
       let merge_event old_id ev =
         let actions = List.map (fun (action: action Lang.ast_node) ->
           let d = match action.d with
@@ -461,6 +482,10 @@ module CombSimplPass = struct
           ) immediate_sa
         ) @ actions in
         if to_keep.(old_id) then (
+          (* update action_event on all AST nodes: eid -> ev.id (the renumbered id) *)
+          List.iter (update_node_ast_annotator_action_event ev.id) ev.expr_nodes;
+          List.iter (update_node_ast_annotator_action_event ev.id) actions;
+          List.iter (update_node_ast_annotator_action_event ev.id) sustained_actions;
           (* we just need to replace things *)
           ev.actions <- actions;
           ev.sustained_actions <- sustained_actions;
@@ -483,9 +508,14 @@ module CombSimplPass = struct
         ) else (
           assert (f != old_id);
           let ev_f = event_arr_old.(f) in
+          (* update action_event on all AST nodes: eid -> ev_f.id (the merge target's id) *)
+          List.iter (update_node_ast_annotator_action_event ev_f.id) ev.expr_nodes;
+          List.iter (update_node_ast_annotator_action_event ev_f.id) actions;
+          List.iter (update_node_ast_annotator_action_event ev_f.id) sustained_actions;
           ev_f.actions <- Utils.list_unordered_join ev_f.actions actions;
           ev_f.sustained_actions <- Utils.list_unordered_join ev_f.sustained_actions sustained_actions;
-          ev_f.is_recurse <- ev_f.is_recurse || ev.is_recurse (* maintain recurse event *)
+          ev_f.is_recurse <- ev_f.is_recurse || ev.is_recurse; (* maintain recurse event *)
+          ev_f.expr_nodes <- Utils.list_unordered_join ev_f.expr_nodes ev.expr_nodes
         )
       in
       List.iter2 (fun e_new e_old -> assert to_keep.(e_old.id); merge_event e_old.id e_new) events_to_keep events_to_keep_old; (* merge events to keep first *)

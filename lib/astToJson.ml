@@ -792,6 +792,46 @@ let event_graph_collection_to_yojson (gc: EventGraph.event_graph_collection): Yo
 
   let event_graph_to_order (t: EventGraph.event_graph) =
     let events = t.events in
+
+    let _delays_memo = Hashtbl.create (5 * List.length events) in
+    let rec compute_delays (src_e: EventGraph.event_source) =
+      if Hashtbl.mem _delays_memo src_e then
+        Hashtbl.find _delays_memo src_e
+      else
+        let delays = match src_e with
+        | `Root None -> [0]
+        | `Root Some (e0, _) -> compute_delays e0.source
+        | `Seq (e0, atomic_delay) ->
+            let adder n = (
+              match atomic_delay with
+                | `Cycles c -> n + c
+                | `Send _ -> n + 0 (* TODO *)
+                | `Recv _ -> n + 0 (* TODO *)
+                | `Sync _ -> n + 0 (* not used *)
+              ) in
+            List.map adder (compute_delays e0.source)
+        | `Later (e1, e2) ->
+            (* later of the 2 events *)
+            let e1_delays = compute_delays e1.source in
+            let e2_delays = compute_delays e2.source in
+            let min_e1_delay = List.fold_left min max_int e1_delays in
+            let min_e2_delay = List.fold_left min max_int e2_delays in
+            let lower_bound = min min_e1_delay min_e2_delay in
+            let upper_bound_list = List.filter (fun d -> d >= lower_bound) (e1_delays @ e2_delays) in
+            List.sort_uniq compare upper_bound_list
+        | `Branch (_, branch_info) ->
+            (* A Branch event is reached when one of the branches completes, not when the branch point starts.
+               Therefore, we should compute the delays from the branch completions (other_events), not from e itself. *)
+            let other_events = branch_info.branches_val in
+            let other_delays_list = List.map (fun (oe: EventGraph.event) -> compute_delays oe.source) other_events in
+            let other_delays = List.flatten other_delays_list in
+            let result = List.sort_uniq compare other_delays in
+            result
+        in
+        Hashtbl.add _delays_memo src_e delays;
+        delays
+    in
+
     let get_event_json (e: EventGraph.event) =
       let get_thread_event_id_pair (e: EventGraph.event) = assoc [
         ("tid", int e.graph.thread_id);
@@ -799,9 +839,13 @@ let event_graph_collection_to_yojson (gc: EventGraph.event_graph_collection): Yo
       ] in
 
       if List.is_empty e.outs
-      then assoc [ ("eid", int e.id) ]
+      then assoc [
+        ("eid", int e.id);
+        ("delays", list int (compute_delays e.source))
+      ]
       else assoc [
         ("eid", int e.id);
+        ("delays", list int (compute_delays e.source));
         ("outs", list get_thread_event_id_pair e.outs)
       ]
     in

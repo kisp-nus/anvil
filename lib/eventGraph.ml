@@ -128,6 +128,7 @@ and event = {
   mutable outs : event list; (** the outbound edges, i.e., the events that directly depend on this event *)
   preds : Utils.int_set; (** set of predecessors, used for fast reachability query. Only used during the graph building process *)
   mutable removed : bool; (** is this event removed? (used in optimisation) *)
+  mutable expr_nodes : Lang.expr_node list; (** the AST nodes associated with this event, used for syncing event annotations on the AST *)
 }
 
 and branch_cond =

@@ -182,4 +182,5 @@ let attach_event (target : 'a Lang.ast_node) (source : EventGraph.event) (sustai
     source.graph.thread_id,
     source.id,
     Option.map (fun (e: EventGraph.event) -> e.id) sustained_until
-  )
+  );
+  source.expr_nodes <- target :: source.expr_nodes
