@@ -174,13 +174,14 @@ let attach_def_from_top_level_type_with_fields (target : 'a Lang.ast_node) (sour
 
 (** Event helpers **)
 
-(** attaches event information to the target (1st arg) from the source (2nd arg), optionally sustained until the given event (3rd arg) *)
-let attach_event (target : 'a Lang.ast_node) (source : EventGraph.event) (sustained_until : EventGraph.event option) =
+(** attaches event information to the target (1st arg) from the source (2nd arg), optionally sustained until the given event (3rd arg); optionally incrementing the cycle count by the given amount (4th arg) *)
+let attach_event (target : 'a Lang.ast_node) (source : EventGraph.event) (sustained_until : EventGraph.event option) (blocking_cycles : int option) =
   if not !enabled then () else
 
   target.action_event <- Some (
     source.graph.thread_id,
     source.id,
-    Option.map (fun (e: EventGraph.event) -> e.id) sustained_until
+    Option.map (fun (e: EventGraph.event) -> e.id) sustained_until,
+    match blocking_cycles with | Some n -> n | None -> 0
   );
   source.expr_nodes <- target :: source.expr_nodes

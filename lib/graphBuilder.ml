@@ -164,7 +164,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
     let err_string = DTypeCheck.fmt_assign lval lvi.lval_dtype td.ld.dtype in
     check_dtype err_string (Some lvi.lval_dtype) td.ld.dtype e.span ci.file_name ci.weak_typecasts ci.typedefs ci.macro_defs;
     ctx.current.actions <- (RegAssign (lvi, td.ld) |> tag_with_span e.span)::ctx.current.actions;
-    AstAnnotator.attach_event e ctx.current None;
+    AstAnnotator.attach_event e ctx.current None (Some 1);
     Typing.cycles_data graph 1 ctx.current
   | Call (id, arg_list) ->
       let func = List.find_opt (fun (f: Lang.func_def) -> f.name = id) ci.func_defs
@@ -307,7 +307,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
     let msg = MessageCollection.lookup_message graph.messages msg_spec ci.channel_classes
       |> unwrap_or_err "Invalid message specifier in ready" e.span in
     AstAnnotator.attach_def_from_top_level_message e msg msg_spec graph;
-    AstAnnotator.attach_event e ctx.current None;
+    AstAnnotator.attach_event e ctx.current None None;
     (* if msg.dir <> In then (
       (* mismatching direction *)
       raise (event_graph_error_default "Mismatching message direction!" e.span)
@@ -319,13 +319,13 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
     let msg = MessageCollection.lookup_message graph.messages msg_spec ci.channel_classes
     |> unwrap_or_err "Invalid message specifier in probe" e.span in
     AstAnnotator.attach_def_from_top_level_message e msg msg_spec graph;
-    AstAnnotator.attach_event e ctx.current None;
+    AstAnnotator.attach_event e ctx.current None None;
     let wires, msg_ack_port = WireCollection.add_msg_ack_port graph.thread_id ci.typedefs msg_spec graph.wires in
     graph.wires <- wires;
     Typing.immediate_data graph (Some msg_ack_port) `Logic ctx.current
   | Cycle n ->
     let data = Typing.cycles_data graph n ctx.current in
-    AstAnnotator.attach_event e ctx.current None;
+    AstAnnotator.attach_event e ctx.current None (Some n);
     data
   | IfExpr (e1, e2, e3) ->
     let td1 = construct_graphIR graph ci ctx e1 in
@@ -349,7 +349,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
     branch_info.branches_val <- [td2.ld.lt.live; td3.ld.lt.live];
 
     BuildContext.branch_merge ctx' [ctx_true; ctx_false];
-    AstAnnotator.attach_event e ctx.current None;
+    AstAnnotator.attach_event e ctx.current None None;
 
     let ctx_br = BuildContext.branch graph ctx' branch_info in
     br_side_true.branch_event <- Some ctx_br.current;
@@ -402,7 +402,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
     BuildContext.branch_merge ctx [ctx_true; ctx_false];
 
     ctx_true.current.actions <- (ImmediateSend (send_pack.send_msg_spec, td_send_data.ld) |> tag_with_span e.span)::ctx_true.current.actions;
-    AstAnnotator.attach_event e ctx_true.current None;
+    AstAnnotator.attach_event e ctx_true.current None None;
 
     (
       try let msg = MessageCollection.lookup_message graph.messages send_pack.send_msg_spec ci.channel_classes
@@ -475,7 +475,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
 
     let action = ImmediateRecv recv_pack.recv_msg_spec |> tag_with_span e.span in
     ctx_true.current.actions <- action::ctx_true.current.actions;
-    AstAnnotator.attach_event e ctx_true.current None;
+    AstAnnotator.attach_event e ctx_true.current None None;
     AstAnnotator.attach_def_from_top_level_message e msg recv_pack.recv_msg_spec graph;
 
     let ctx_br = BuildContext.branch graph ctx branch_info in
@@ -605,7 +605,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
       | false -> `Array (List.hd tdtype, ParamEnv.Concrete (List.length es))
       | _ -> `Array (`Logic, ParamEnv.Concrete (w.size))
     ) in
-    AstAnnotator.attach_event e ctx.current None;
+    AstAnnotator.attach_event e ctx.current None None;
     List.map (fun (_,td) -> td.ld) tds |> Typing.merged_data graph (Some w) new_dtype ctx.current
   |  Read rlval ->
     let reg_ident = Lang.get_lvalue_reg_id rlval in
@@ -693,11 +693,11 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
         if not all_w then
           raise (Except.TypeError [Text "Invalid value in debug print"; Except.codespan_local e.span]);
         ctx.current.actions <- (let open EventGraph in DebugPrint (s, List.map (fun td -> td.ld) timed_ws) |> tag_with_span e.span)::ctx.current.actions;
-        AstAnnotator.attach_event e ctx.current None;
+        AstAnnotator.attach_event e ctx.current None None;
         {ld = {w = None; lt = EventGraphOps.lifetime_const ctx.current; reg_borrows = []; dtype = unit_dtype}}
       | DebugFinish ->
         ctx.current.actions <- (let open EventGraph in tag_with_span e.span DebugFinish)::ctx.current.actions;
-        AstAnnotator.attach_event e ctx.current None;
+        AstAnnotator.attach_event e ctx.current None None;
         {ld = {w = None; lt = EventGraphOps.lifetime_const ctx.current; reg_borrows = []; dtype = unit_dtype}}
     )
   | Send send_pack ->
@@ -724,7 +724,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
         until = ntd.ld.lt.live;
         ty = Send (send_pack.send_msg_spec, td.ld)
       } |> tag_with_span e.span)::ctx.current.sustained_actions;
-    AstAnnotator.attach_event e ctx.current (Some ntd.ld.lt.live);
+    AstAnnotator.attach_event e ctx.current (Some ntd.ld.lt.live) None;
     ntd
 
   | Recv recv_pack ->
@@ -745,7 +745,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
     let ntd = Typing.recv_msg_data graph w recv_pack.recv_msg_spec msg ctx.current in
     ctx.current.sustained_actions <-
       ({until = ntd.ld.lt.live; ty = Recv recv_pack.recv_msg_spec} |> tag_with_span e.span)::ctx.current.sustained_actions;
-    AstAnnotator.attach_event e ctx.current (Some ntd.ld.lt.live);
+    AstAnnotator.attach_event e ctx.current (Some ntd.ld.lt.live) None;
     ntd
 
   | Indirect (e', fieldname) ->
@@ -934,7 +934,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
         shared_info.assigned_at <- Some ctx.current;
       );
       ctx.current.actions <- (PutShared (id, shared_info, value_td.ld) |> tag_with_span e.span)::ctx.current.actions;
-      AstAnnotator.attach_event e ctx.current None;
+      AstAnnotator.attach_event e ctx.current None None;
     else
       raise (event_graph_error_default "Shared variable assigned in wrong thread" e.span);
     Typing.const_data graph None (unit_dtype) ctx.current

@@ -67,9 +67,13 @@ let ast_node_to_yojson f (n: 'a ast_node) = kind "ast_node" (
     let sp = ("span", code_span_to_yojson n.span) in
     let dt = ("data", f n.d) in
     let eid = ("event", match n.action_event with
-      | Some (tid, eid, None) -> assoc
+      | Some (tid, eid, None, blocking_cycles) when blocking_cycles > 0 -> assoc
+        [ ("tid", int tid); ("eid", int eid); ("cycles", int blocking_cycles) ]
+      | Some (tid, eid, None, _) -> assoc
         [ ("tid", int tid); ("eid", int eid) ]
-      | Some (tid, eid, Some sustained_to_eid) -> assoc
+      | Some (tid, eid, Some sustained_to_eid, blocking_cycles) when blocking_cycles > 0 -> assoc
+        [ ("tid", int tid); ("eid", int eid); ("to_eid", int sustained_to_eid); ("cycles", int blocking_cycles) ]
+      | Some (tid, eid, Some sustained_to_eid, _) -> assoc
         [ ("tid", int tid); ("eid", int eid); ("to_eid", int sustained_to_eid) ]
       | None -> `Null
     ) in

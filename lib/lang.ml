@@ -25,7 +25,7 @@ type identifier = string
 type 'a ast_node = {
   span : code_span;
   mutable def_span : def_span list; (* the definitions associated with this node (if applicable) *)
-  mutable action_event : (int * int * int option) option; (** opt (thread id, event id, sustained-till-event id) *)
+  mutable action_event : (int * int * int option * int) option; (** opt (thread id, event id, sustained-till-event id, blocking cycles) *)
     (* if applicable, denotes the event where this action is executed in, within the node's process *)
   d : 'a;
 }
