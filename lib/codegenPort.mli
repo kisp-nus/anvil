@@ -33,10 +33,11 @@ val instanformat : t -> string
 
 val valid_port_names_from_endpoint : Lang.channel_class_def list -> Lang.endpoint_def -> string list
 
-val valid_port_names : Lang.channel_class_def list -> Lang.endpoint_def list -> string list
+val valid_port_names : Lang.channel_class_def list -> Lang.endpoint_def list -> string list 
 
 val ack_port_names_from_endpoint : Lang.channel_class_def list -> Lang.endpoint_def -> string list
 
 val ack_port_names : Lang.channel_class_def list -> Lang.endpoint_def list -> string list
 
 val data_port_names : Lang.channel_class_def list -> Lang.endpoint_def list -> string list
+  

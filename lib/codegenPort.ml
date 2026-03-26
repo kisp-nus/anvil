@@ -117,4 +117,3 @@ let data_port_names (channel_classes : channel_class_def list)
     ) cc.messages
   in
   List.concat_map data_names_from_endpoint endpoints
-

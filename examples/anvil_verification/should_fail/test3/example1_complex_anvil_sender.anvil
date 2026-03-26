@@ -4,9 +4,6 @@ chan ch {
     left req2: (logic[8]@#4) @#1 - @dyn
 }
 
-chan ch2 {
-    left req: (logic[8]@#4)
-}
 proc example1_complex_anvil_sender(ep: right ch) {
     reg r : logic[8];
     reg r2 : logic[8];
