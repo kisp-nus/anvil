@@ -12,8 +12,223 @@ let ast_json_schema_version_string =
   Printf.sprintf "v%d.%d.%d%s" ast_major_version ast_minor_version ast_patch_version wip_str
 
 
-(* Helper functions for constructing Yojson values *)
+(* Symbolic sum type for representing cycle delays with unknowns (e.g., N_0 + 1) *)
+type cycle_time_sum_term =
+  | CycleConstTime of int
+  | CycleUnknownTime of string
+  | CycleOrTime of cycle_time_sum list
+  | CycleMaxTime of string * cycle_time_sum list
 
+and cycle_time_sum = cycle_time_sum_term list
+
+type optionable_cycle_time_sum = cycle_time_sum_term option list
+
+(* Helper functions for cycle time symbolic sums *)
+let rec simplify_cycle_time_sum (terms: cycle_time_sum) : cycle_time_sum =
+  match terms with
+  | [] -> []
+  | CycleConstTime n :: rest when n = 0 -> rest
+  | t :: rest -> t :: simplify_cycle_time_sum rest
+
+let rec sort_cycle_time_sum (terms: cycle_time_sum) : cycle_time_sum =
+  terms
+  |> List.sort (fun a b -> match a, b with
+    | CycleUnknownTime s1, CycleUnknownTime s2 -> String.compare s1 s2
+    | CycleUnknownTime _, CycleConstTime _ -> -1
+    | CycleConstTime _, CycleUnknownTime _ -> 1
+    | CycleConstTime n1, CycleConstTime n2 -> compare n1 n2
+    | CycleMaxTime _, _ -> 1
+    | _, CycleMaxTime _ -> -1
+    | CycleOrTime _, _ -> 1
+    | _, CycleOrTime _ -> -1
+  )
+  |> List.map (function
+    | CycleMaxTime (s, max_terms) -> CycleMaxTime (s, List.map sort_cycle_time_sum max_terms)
+    | t -> t
+  )
+
+let equal_cycle_time_sums (terms1: cycle_time_sum) (terms2: cycle_time_sum) : bool =
+  let symbol_count_tbl = Hashtbl.create ((List.length terms1 + List.length terms2) * 5) in
+
+  let count_const terms =
+    List.fold_left (fun acc term ->
+      match term with
+      | CycleConstTime n -> acc + n
+      | _ -> acc
+    ) 0 terms
+  in
+
+  let count_terms terms dir =
+    List.iter (function
+      | CycleUnknownTime s ->
+          let count = Hashtbl.find_opt symbol_count_tbl s |> Option.value ~default:0 in
+          Hashtbl.replace symbol_count_tbl s (count + dir)
+      | CycleMaxTime (s, _) ->
+          let count = Hashtbl.find_opt symbol_count_tbl s |> Option.value ~default:0 in
+          Hashtbl.replace symbol_count_tbl s (count + dir)
+      | _ -> ()
+    ) terms
+  in
+
+  count_terms terms1 (+1);
+  count_terms terms2 (-1);
+
+  let result =
+    (* if all counts are 0, then the symbolic parts are equivalent *)
+    Hashtbl.fold (fun _ count acc -> if count <> 0 then false else acc) symbol_count_tbl true &&
+    (* if the constants are equal, then the constant parts are equivalent *)
+    count_const terms1 = count_const terms2
+  in
+  result
+
+let rec add_const_to_cycle_time_sum (n: int) (terms: cycle_time_sum) : cycle_time_sum =
+  match terms with
+  | CycleConstTime m :: rest ->
+      (* merge with the previous constants *)
+      add_const_to_cycle_time_sum (n + m) rest
+  | CycleMaxTime (max_s, _) :: rest ->
+      (* replace the max term with its shorthand as it'll no longer be the most recent addition *)
+      add_const_to_cycle_time_sum n (CycleUnknownTime max_s :: rest)
+  | _ ->
+      (* base case (the constant added at the end to maintain fast access) (only if non-0) *)
+      if n = 0 then terms else CycleConstTime n :: terms
+
+let rec add_unknown_to_cycle_time_sum (s: string) (terms: cycle_time_sum) : cycle_time_sum =
+  match terms with
+  | CycleConstTime n :: rest ->
+      (* constants must remain at the end, so we skip over them to add the unknown before it *)
+      CycleConstTime n :: (add_unknown_to_cycle_time_sum s rest)
+  | CycleMaxTime (max_s, _) :: rest ->
+      (* replace the max term with its shorthand as it'll no longer be the most recent addition *)
+      add_unknown_to_cycle_time_sum s (CycleUnknownTime max_s :: rest)
+  | _ ->
+      (* base case, after constants *)
+      CycleUnknownTime s :: terms
+
+let or_cycle_time_sum (sums: cycle_time_sum list) : cycle_time_sum =
+  (* flatten nested ors *)
+  let rec flatten_or (terms: cycle_time_sum) : cycle_time_sum =
+    List.fold_left (fun acc term ->
+      match term with
+      | CycleOrTime sub_sums ->
+          let flat_sub_sums = List.map flatten_or sub_sums in
+          List.flatten flat_sub_sums @ acc
+      | t -> t :: acc
+    ) [] terms
+  in
+
+  let merged_sums = List.map flatten_or sums in
+  match merged_sums with
+  | [] -> []
+  | [single] -> single
+  | _ -> (CycleOrTime merged_sums) :: []
+
+
+let max_cycle_time_sum (s: string) (max_terms: cycle_time_sum list) : cycle_time_sum =
+  (* highlight the new max-expr created by having it at the end *)
+
+  let merge_max_of sum1 sum2 =
+    let const1 = List.fold_left (fun acc term ->
+      match term with
+      | CycleConstTime n -> acc + n
+      | _ -> acc
+    ) 0 sum1 in
+    let symbolic1 = List.filter (function
+      | CycleConstTime _ -> false
+      | _ -> true
+    ) sum1 |> sort_cycle_time_sum in
+    let const2 = List.fold_left (fun acc term ->
+      match term with
+      | CycleConstTime n -> acc + n
+      | _ -> acc
+    ) 0 sum2 in
+    let symbolic2 = List.filter (function
+      | CycleConstTime _ -> false
+      | _ -> true
+    ) sum2 |> sort_cycle_time_sum in
+    let max_of_consts = max const1 const2 in
+
+    if symbolic1 = symbolic2 then
+      if max_of_consts = 0 then
+        Some symbolic1
+      else
+        Some ((CycleConstTime max_of_consts) :: symbolic1)
+
+    else
+      (* determine if one side is strictly greater than the other by checking if they have strictly more unknown terms *)
+      let sym1_counts = Hashtbl.create 10 in
+      let sym2_counts = Hashtbl.create 10 in
+      List.iter (function
+        | CycleUnknownTime s ->
+            let count = Hashtbl.find_opt sym1_counts s |> Option.value ~default:0 in
+            Hashtbl.replace sym1_counts s (count + 1)
+        | _ -> ()
+      ) symbolic1;
+      List.iter (function
+        | CycleUnknownTime s ->
+            let count = Hashtbl.find_opt sym2_counts s |> Option.value ~default:0 in
+            Hashtbl.replace sym2_counts s (count + 1)
+        | _ -> ()
+      ) symbolic2;
+
+      let sym1_greater = Hashtbl.fold (fun s count acc ->
+        let sym2_count = Hashtbl.find_opt sym2_counts s |> Option.value ~default:0 in
+        if count > sym2_count then true else acc
+      ) sym1_counts false in
+      let sym2_greater = Hashtbl.fold (fun s count acc ->
+        let sym1_count = Hashtbl.find_opt sym1_counts s |> Option.value ~default:0 in
+        if count > sym1_count then true else acc
+      ) sym2_counts false in
+
+      if sym1_greater && not sym2_greater then
+        Some ((CycleConstTime max_of_consts) :: symbolic1)
+      else if sym2_greater && not sym1_greater then
+        Some ((CycleConstTime max_of_consts) :: symbolic2)
+      else
+        (* non trivial case *)
+        None
+  in
+
+  let rec flatten_max (terms: cycle_time_sum) : cycle_time_sum =
+    List.fold_left (fun acc term ->
+      match term with
+      | CycleMaxTime (s, max_terms) ->
+          (* flatten nested maxes *)
+          let flat_max_terms = List.map flatten_max max_terms in
+          CycleMaxTime (s, flat_max_terms) :: acc
+      | t -> t :: acc
+    ) [] terms
+  in
+
+  let rec merge_maxes (terms : cycle_time_sum list) : cycle_time_sum list =
+    match terms with
+    | t1 :: t2 :: rest -> (
+      match merge_max_of t1 t2 with
+      | Some merged -> merge_maxes (merged :: rest)
+      | None -> t1 :: (merge_maxes (t2 :: rest))
+    )
+    | terms -> terms
+  in
+
+  (CycleMaxTime (s, max_terms |> List.map flatten_max |> merge_maxes)) :: []
+
+
+let rec extend_cycle_time_sums (terms1: cycle_time_sum) (terms2: cycle_time_sum) : cycle_time_sum =
+  match terms1 with
+  | [] -> terms2
+  | CycleConstTime n :: rest -> extend_cycle_time_sums rest terms2 |> add_const_to_cycle_time_sum n
+  | CycleUnknownTime s :: rest -> extend_cycle_time_sums rest terms2 |> add_unknown_to_cycle_time_sum s
+  | CycleOrTime sums :: rest -> (or_cycle_time_sum sums) @ (extend_cycle_time_sums rest terms2)
+  | CycleMaxTime (s, ts) :: rest -> (max_cycle_time_sum s ts) @ (extend_cycle_time_sums rest terms2)
+
+
+
+(* Global mapping from (tid, eid, to_eid option) to symbolic sum consumed by that action *)
+(* This is populated during event graph processing and used when converting AST nodes *)
+let global_event_id_to_unknown_cycles_map : ((int * int * int option), cycle_time_sum) Hashtbl.t = Hashtbl.create 100
+
+
+(* Helper functions for constructing Yojson values *)
 let assoc l = `Assoc l
 let str s = `String s
 let int n = `Int n
@@ -27,6 +242,21 @@ let opt f = function
 
 let kind (k: string) (fields: (string * Yojson.Safe.t) list) =
   assoc (("kind", str k) :: fields)
+
+
+(* Function for converting a cycle time symbolic sum to Yojson. *)
+let rec symbolic_sum_to_yojson (terms: cycle_time_sum) : Yojson.Safe.t =
+  list_rev (function
+    | CycleConstTime n -> assoc [("const", int n)]
+    | CycleUnknownTime s -> assoc [("sym", str s)]
+    | CycleOrTime sums -> assoc [
+        ("or", list symbolic_sum_to_yojson sums)
+      ]
+    | CycleMaxTime (s, max_terms) -> assoc [
+        ("sym", str s);
+        ("max", list symbolic_sum_to_yojson max_terms)
+      ]
+  ) (simplify_cycle_time_sum terms)
 
 
 (* Functions for conversion of Lang constructs to Yojson.
@@ -67,14 +297,23 @@ let ast_node_to_yojson f (n: 'a ast_node) = kind "ast_node" (
     let sp = ("span", code_span_to_yojson n.span) in
     let dt = ("data", f n.d) in
     let eid = ("event", match n.action_event with
-      | Some (tid, eid, None, blocking_cycles) when blocking_cycles > 0 -> assoc
-        [ ("tid", int tid); ("eid", int eid); ("cycles", int blocking_cycles) ]
-      | Some (tid, eid, None, _) -> assoc
-        [ ("tid", int tid); ("eid", int eid) ]
-      | Some (tid, eid, Some sustained_to_eid, blocking_cycles) when blocking_cycles > 0 -> assoc
-        [ ("tid", int tid); ("eid", int eid); ("to_eid", int sustained_to_eid); ("cycles", int blocking_cycles) ]
-      | Some (tid, eid, Some sustained_to_eid, _) -> assoc
-        [ ("tid", int tid); ("eid", int eid); ("to_eid", int sustained_to_eid) ]
+      | Some (tid, eid, sus_to_eid, blocking_cycles) ->
+        let live_to_eid_field = (match sus_to_eid with
+          | Some sustained_to_eid -> [ ("live_to_eid", int sustained_to_eid) ]
+          | None -> []
+        ) in
+        let exec_delay_field : (string * Yojson.Safe.t) list =
+          let lookup = Hashtbl.find_opt global_event_id_to_unknown_cycles_map (tid, eid, sus_to_eid) in
+          match blocking_cycles, lookup with
+          | _, Some c -> [ ("delay_to_exec", symbolic_sum_to_yojson c) ]
+          | n, _ -> [ ("delay_to_exec", symbolic_sum_to_yojson (add_const_to_cycle_time_sum n [])) ]
+        in
+        assoc (
+          [
+            ("tid", int tid);
+            ("eid", int eid);
+          ] @ live_to_eid_field @ exec_delay_field
+        )
       | None -> `Null
     ) in
     let def_spans = ("def_span", list_rev def_span_to_yojson n.def_span) in
@@ -792,45 +1031,77 @@ let func_def_to_yojson (f: func_def) =
 
 (* Functions for conversion of important EventGraph constructs to Yojson *)
 
+(* Functions for conversion of important EventGraph constructs to Yojson *)
+
 let event_graph_collection_to_yojson (gc: EventGraph.event_graph_collection): Yojson.Safe.t list =
+
+  (* Note: We do NOT clear the map here, as it needs to accumulate entries from all event graph collections
+     in this compilation unit. The map is cleared once at the top level in compilation_unit_with_event_graph_to_yojson. *)
+
+  (* Counter for generating unique symbolic variable names *)
+  let symbolic_counter = ref 0 in
+  let fresh_symbolic_var prefix = 
+    let n = !symbolic_counter in
+    symbolic_counter := n + 1;
+    Printf.sprintf "%s%d" prefix n
+  in
 
   let event_graph_to_order (t: EventGraph.event_graph) =
     let events = t.events in
+    let tid = t.thread_id in
 
+    (* First pass: identify all dynamic operations and assign symbolic variables *)
+    let event_source_to_unknown_cycles_map = Hashtbl.create (List.length events) in
+    let process_event_for_symbolic_vars (e: EventGraph.event) =
+      match e.source with
+      | `Seq (e0, atomic_delay) ->
+          (match atomic_delay with
+          | `Send _ | `Recv _ | `Sync _ ->
+              let var = fresh_symbolic_var "n" in
+              let symbolic_sum = [CycleUnknownTime var] in
+              Hashtbl.add event_source_to_unknown_cycles_map e.source symbolic_sum;
+              Hashtbl.add global_event_id_to_unknown_cycles_map (tid, e0.id, Some e.id) symbolic_sum
+          | _ -> ())
+      | _ -> ()
+    in
+    List.iter process_event_for_symbolic_vars events;
+
+    (* Second pass: compute delays for each event, using the symbolic variables where needed *)
     let _delays_memo = Hashtbl.create (5 * List.length events) in
-    let rec compute_delays (src_e: EventGraph.event_source) =
+    let rec compute_delays (src_e: EventGraph.event_source) : cycle_time_sum =
       if Hashtbl.mem _delays_memo src_e then
         Hashtbl.find _delays_memo src_e
       else
         let delays = match src_e with
-        | `Root None -> [0]
+        | `Root None -> []
         | `Root Some (e0, _) -> compute_delays e0.source
         | `Seq (e0, atomic_delay) ->
-            let adder n = (
+            let adder (sum: cycle_time_sum) = (
               match atomic_delay with
-                | `Cycles c -> n + c
-                | `Send _ -> n + 0 (* TODO *)
-                | `Recv _ -> n + 0 (* TODO *)
-                | `Sync _ -> n + 0 (* not used *)
+                | `Cycles c -> add_const_to_cycle_time_sum c sum
+                | `Send _ | `Recv _ | `Sync _ ->
+                    (* Look up the symbolic variable we assigned in the first pass *)
+                    (match Hashtbl.find_opt event_source_to_unknown_cycles_map src_e with
+                    | Some sym_sum -> extend_cycle_time_sums sym_sum sum
+                    | None -> sum) (* Should not happen *)
               ) in
-            List.map adder (compute_delays e0.source)
+            adder (compute_delays e0.source)
         | `Later (e1, e2) ->
-            (* later of the 2 events *)
+            (* Later of the 2 events *)
             let e1_delays = compute_delays e1.source in
             let e2_delays = compute_delays e2.source in
-            let min_e1_delay = List.fold_left min max_int e1_delays in
-            let min_e2_delay = List.fold_left min max_int e2_delays in
-            let lower_bound = min min_e1_delay min_e2_delay in
-            let upper_bound_list = List.filter (fun d -> d >= lower_bound) (e1_delays @ e2_delays) in
-            List.sort_uniq compare upper_bound_list
+
+            (* Compute the max of the two set of delays *)
+            let new_max_var = fresh_symbolic_var "max" in
+            let results = (max_cycle_time_sum new_max_var [e1_delays; e2_delays]) in
+
+            results
         | `Branch (_, branch_info) ->
-            (* A Branch event is reached when one of the branches completes, not when the branch point starts.
-               Therefore, we should compute the delays from the branch completions (other_events), not from e itself. *)
+            (* A Branch event is reached when one of the branches completes (not when the branch point starts). *)
             let other_events = branch_info.branches_val in
-            let other_delays_list = List.map (fun (oe: EventGraph.event) -> compute_delays oe.source) other_events in
-            let other_delays = List.flatten other_delays_list in
-            let result = List.sort_uniq compare other_delays in
-            result
+            let other_delays = List.map (fun (oe: EventGraph.event) -> compute_delays oe.source) other_events in
+            let unique_other_delays = List.fold_left (fun acc d -> if List.exists (equal_cycle_time_sums d) acc then acc else d :: acc) [] other_delays in
+            or_cycle_time_sum unique_other_delays
         in
         Hashtbl.add _delays_memo src_e delays;
         delays
@@ -842,14 +1113,16 @@ let event_graph_collection_to_yojson (gc: EventGraph.event_graph_collection): Yo
         ("eid", int e.id)
       ] in
 
+      let delays_json = symbolic_sum_to_yojson (compute_delays e.source) in
+
       if List.is_empty e.outs
       then assoc [
         ("eid", int e.id);
-        ("delays", list int (compute_delays e.source))
+        ("delay", delays_json)
       ]
       else assoc [
         ("eid", int e.id);
-        ("delays", list int (compute_delays e.source));
+        ("delay", delays_json);
         ("outs", list get_thread_event_id_pair e.outs)
       ]
     in
@@ -892,6 +1165,8 @@ let compilation_unit_with_supplementary_data_to_yojson (c: compilation_unit) (sd
 
 
 let compilation_unit_with_event_graph_to_yojson (c: compilation_unit) (gcl: EventGraph.event_graph_collection list) =
+  (* Clear the global map once at the start, before processing all event graph collections *)
+  Hashtbl.clear global_event_id_to_unknown_cycles_map;
   let event_graphs = List.map (fun gc -> event_graph_collection_to_yojson gc) gcl |> List.concat in
   compilation_unit_with_supplementary_data_to_yojson c [("event_graphs", `List event_graphs)]
 
