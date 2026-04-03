@@ -17,6 +17,7 @@ type compile_config = {
 
   json_output : bool; (** output compilation results in JSON format *)
   input_filenames : string list; (** list of file names to be compiled *)
+  sv_extern_mode: string;
 }
 
 (** Parse the process arguments for a set of configurations. *)

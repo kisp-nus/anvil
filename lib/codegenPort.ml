@@ -51,3 +51,71 @@ let format (typedefs : TypedefMap.t) (macro_defs: macro_def list) port =
     | Inp -> "input"
     | Out -> "output"
   in if port.dtype <> Lang.unit_dtype then Printf.sprintf "%s %s %s" inout (CodegenFormat.format_dtype typedefs macro_defs port.dtype) ep_name_formatted else ""
+
+let assertformat (typedefs : TypedefMap.t) (macro_defs: macro_def list) port =
+  Printf.sprintf "%s %s" (CodegenFormat.format_dtype typedefs macro_defs port.dtype) port.name
+
+let instanformat port =
+  Printf.sprintf "%s" port.name
+
+let valid_port_names_from_endpoint
+    (channel_classes : channel_class_def list)
+    (endpoint : endpoint_def)
+  : identifier list =
+  let cc =
+    Option.get (MessageCollection.lookup_channel_class channel_classes endpoint.channel_class)
+  in
+  cc.messages
+  |> List.filter (fun msg ->
+       let msg = ParamConcretise.concretise_message cc.params endpoint.channel_params msg in
+       message_has_valid_port msg
+     )
+  |> List.map (fun msg ->
+       let msg = ParamConcretise.concretise_message cc.params endpoint.channel_params msg in
+       CodegenFormat.format_msg_valid_signal_name endpoint.name msg.name
+     )
+
+let valid_port_names
+    (channel_classes : channel_class_def list)
+    (endpoints : endpoint_def list)
+  : identifier list =
+  List.concat_map (valid_port_names_from_endpoint channel_classes) endpoints
+
+let ack_port_names_from_endpoint
+    (channel_classes : channel_class_def list)
+    (endpoint : endpoint_def)
+  : identifier list =
+  let cc =
+    Option.get (MessageCollection.lookup_channel_class channel_classes endpoint.channel_class)
+  in
+  cc.messages
+  |> List.filter (fun msg ->
+       let msg = ParamConcretise.concretise_message cc.params endpoint.channel_params msg in
+       message_has_ack_port msg
+     )
+  |> List.map (fun msg ->
+       let msg = ParamConcretise.concretise_message cc.params endpoint.channel_params msg in
+       CodegenFormat.format_msg_ack_signal_name endpoint.name msg.name
+     )
+
+let ack_port_names
+    (channel_classes : channel_class_def list)
+    (endpoints : endpoint_def list)
+  : identifier list =
+  List.concat_map (ack_port_names_from_endpoint channel_classes) endpoints
+
+let data_port_names (channel_classes : channel_class_def list)
+                    (endpoints : endpoint_def list)
+  : identifier list =
+  let data_names_from_endpoint (endpoint : endpoint_def) =
+    let cc =
+      Option.get (MessageCollection.lookup_channel_class channel_classes endpoint.channel_class)
+    in
+    List.concat_map (fun (msg : message_def) ->
+      let msg = ParamConcretise.concretise_message cc.params endpoint.channel_params msg in
+      List.mapi (fun i (_stype : sig_type_chan_local) ->
+        CodegenFormat.format_msg_data_signal_name endpoint.name msg.name i
+      ) msg.sig_types
+    ) cc.messages
+  in
+  List.concat_map data_names_from_endpoint endpoints
