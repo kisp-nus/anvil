@@ -107,17 +107,16 @@ let rec add_unknown_to_cycle_time_sum (s: string) (terms: cycle_time_sum) : cycl
 
 let or_cycle_time_sum (sums: cycle_time_sum list) : cycle_time_sum =
   (* flatten nested ors *)
-  let rec flatten_or (terms: cycle_time_sum) : cycle_time_sum =
-    List.fold_left (fun acc term ->
-      match term with
-      | CycleOrTime sub_sums ->
-          let flat_sub_sums = List.map flatten_or sub_sums in
-          List.flatten flat_sub_sums @ acc
-      | t -> t :: acc
-    ) [] terms
+  let rec flatten_or (terms: cycle_time_sum list) : cycle_time_sum list =
+    match terms with
+    | [] -> []
+    | [CycleOrTime inner_sums] :: rest ->
+        flatten_or inner_sums @ flatten_or rest
+    | t :: rest ->
+        t :: flatten_or rest
   in
 
-  let merged_sums = List.map flatten_or sums in
+  let merged_sums = flatten_or sums in
   match merged_sums with
   | [] -> []
   | [single] -> single
@@ -189,15 +188,13 @@ let max_cycle_time_sum (s: string) (max_terms: cycle_time_sum list) : cycle_time
         None
   in
 
-  let rec flatten_max (terms: cycle_time_sum) : cycle_time_sum =
-    List.fold_left (fun acc term ->
-      match term with
-      | CycleMaxTime (s, max_terms) ->
-          (* flatten nested maxes *)
-          let flat_max_terms = List.map flatten_max max_terms in
-          CycleMaxTime (s, flat_max_terms) :: acc
-      | t -> t :: acc
-    ) [] terms
+  let rec flatten_max (sums: cycle_time_sum list) : cycle_time_sum list =
+    match sums with
+    | [] -> []
+    | [CycleMaxTime (_, inner_max_terms)] :: rest ->
+        flatten_max inner_max_terms @ flatten_max rest
+    | t :: rest ->
+        t :: flatten_max rest
   in
 
   let rec merge_maxes (terms : cycle_time_sum list) : cycle_time_sum list =
@@ -210,7 +207,7 @@ let max_cycle_time_sum (s: string) (max_terms: cycle_time_sum list) : cycle_time
     | terms -> terms
   in
 
-  (CycleMaxTime (s, max_terms |> List.map flatten_max |> merge_maxes)) :: []
+  (CycleMaxTime (s, max_terms |> flatten_max |> merge_maxes)) :: []
 
 
 let rec extend_cycle_time_sums (terms1: cycle_time_sum) (terms2: cycle_time_sum) : cycle_time_sum =
