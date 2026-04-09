@@ -39,10 +39,10 @@ let parse_args () : compile_config =
       ("-just-check", Arg.Set just_check, "Only typecheck and validate the input files");
       ("-two-round", Arg.Set two_round_graph, "Enable codegen of logic for two rounds");
       ("-json", Arg.Set json_output, "Output compilation results in JSON format");
-      ("-sv-extern", Arg.Set_string sv_extern_mode, "SV extern mode: extern (default), anvil, all, none")
+      ("-sv-extern", Arg.Set_string sv_extern_mode, "SV extern mode: extern")
     ]
     add_input_filename
-    "anvil [-stdin] [-verbose] [-disable-lt-checks] [-O <opt-level>] [-two-round] [-json] [-strict-dtc] <file1> [<file2>] ...";
+    "anvil [-stdin] [-verbose] [-disable-lt-checks] [-O <opt-level>] [-two-round] [-json] [-strict-dtc] [-sv-extern] <file1> [<file2>] ...";
   {
     verbose = !verbose;
     stdin = !stdin;

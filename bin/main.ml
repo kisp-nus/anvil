@@ -68,8 +68,10 @@ let compile_with_normal_output config =
 
 let () =
   let config = Anvil.Config.parse_args() in
-  if config.sv_extern_mode <> "" then
+  if config.sv_extern_mode = "extern" then
     Anvil.CompileDriver.verification_run config
+  else if config.sv_extern_mode <> "" then
+    failwith ("Unsupported -sv-extern mode: " ^ config.sv_extern_mode)
   else if config.json_output then
     compile_with_json_output config
   else

@@ -11,9 +11,9 @@ let strip_sv_name (path : string) : string =
 let user_sv () : string =
   match !user_sv_ref with
   | Some s -> strip_sv_name s
-  | None -> failwith "AssertName.sender: not initialised (call AssertName.generate first)"
+  | None -> failwith "AssertName.user_sv: not initialised"
 
 let anvil_sv () : string =
   match !anvil_sv_ref with
-  | Some s -> s
-  | None -> failwith "AssertName.receiver: not initialised (call AssertName.generate first)"
+  | Some s -> strip_sv_name s
+  | None -> failwith "AssertName.anvil_sv: not initialised"

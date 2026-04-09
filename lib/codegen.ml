@@ -476,24 +476,6 @@ let verification_codegen_instantiations printer (graphs : event_graph_collection
   port_list
 
 let verification_codegen_proc printer (graphs : EventGraph.event_graph_collection) (g : proc_graph) =
-  (* For Testing Purpose *)
-  (* let print_num_messages (ep : Lang.endpoint_def) = 
-    let cc = Option.get (MessageCollection.lookup_channel_class graphs.channel_classes ep.channel_class) in 
-      let num_messages = List.length cc.messages in 
-      Printf.printf "Endpoint %s has %d messages\n" ep.name num_messages 
-    in 
-    List.iter print_num_messages g.messages.args; *)
-
-  (* let _ =
-    CodegenPort.valid_port_names graphs.channel_classes g.messages.args
-    |> String.concat ", "
-    |> print_endline
-  in *)
-
-  (* let names = CodegenPort.valid_port_names graphs.channel_classes g.messages.args in
-  let first_name = List.nth names 2 in
-  print_endline first_name; *)
-
   let rec find_endpoint_message count endpoints =
     match endpoints with
     | [] -> None
@@ -523,7 +505,6 @@ let verification_codegen_proc printer (graphs : EventGraph.event_graph_collectio
   in
   let counts = List.map num_messages g.messages.args in
   let total_count = List.fold_left ( + ) 0 counts in
-  (* Printf.sprintf "%d" total_count |> CodegenPrinter.print_line printer; *)
 
   (* The list of signals, later use for indexing *)
   let valid_names = CodegenPort.valid_port_names graphs.channel_classes g.messages.args in
@@ -531,7 +512,6 @@ let verification_codegen_proc printer (graphs : EventGraph.event_graph_collectio
   let data_names = CodegenPort.data_port_names graphs.channel_classes g.messages.args in
 
   (* Print Top Module *)
-  Printf.sprintf "/* verilator lint_off DECLFILENAME */" |> CodegenPrinter.print_line printer;
   (* Print the input, output ports *)
   let name_assert = AssertName.user_sv() ^ "_assert" in
   Printf.sprintf "module %s (\n);" name_assert |> CodegenPrinter.print_line printer ~lvl_delta_post:1;
@@ -574,22 +554,6 @@ let verification_codegen_proc printer (graphs : EventGraph.event_graph_collectio
   
   (* Start Looping to Print the Wrapper *)
   for count = 0 to total_count-1 do
-  (* let selected =
-    match find_endpoint_message count endpoint_counts with
-    | Some (ep, local_idx) ->
-        (* let cc =
-          MessageCollection.lookup_channel_class graphs.channel_classes ep.channel_class
-          |> Option.get
-        in
-        (* let msg_def = List.nth cc.messages local_idx in
-        let msg_def =
-          ParamConcretise.concretise_message cc.params ep.channel_params msg_def
-        in *) *)
-        Some (ep, local_idx)
-    | None ->
-        None
-  in *)
-
   match find_endpoint_message count endpoint_counts with
   | Some (ep, local_idx) ->
 
@@ -612,34 +576,6 @@ let verification_codegen_proc printer (graphs : EventGraph.event_graph_collectio
       | _ -> None
     in
 
-    (* For Testing Purpose *)
-    (* let print_endpoint_messages (ep : Lang.endpoint_def) =
-      let cc =
-        Option.get (MessageCollection.lookup_channel_class graphs.channel_classes ep.channel_class)
-      in
-      let msg_names =
-        cc.messages
-        |> List.map (fun (msg : message_def) -> msg.name)
-        |> String.concat ", "
-      in
-      Printf.printf "Endpoint %s: %s\n" ep.name msg_names 
-    in
-    List.iter print_endpoint_messages g.messages.args; *)
-    
-
-    (* Old Print the lifetime contract *)
-    (* let print_declared_cycle_bound (ep : Lang.endpoint_def) =
-      let cc = MessageCollection.lookup_channel_class graphs.channel_classes ep.channel_class |> Option.get in
-        let msg_def = List.hd cc.messages in
-          let msg_def = ParamConcretise.concretise_message cc.params ep.channel_params msg_def in
-          match msg_def.sig_types with
-          | [] -> Printf.printf "parameter int N = #;\n"
-          | stype0 :: _ ->
-            match number_of_lifetime_cycles stype0.lifetime.e with
-            | Some n -> Printf.printf "parameter int N = %d;\n" n 
-            | None -> Printf.printf "parameter int N = #;\n" in
-    List.iter print_declared_cycle_bound g.messages.args; *)
-
     (* Print the lifetime contract *)
     let print_declared_cycle_bound count (ep : Lang.endpoint_def) =
       let cc = MessageCollection.lookup_channel_class graphs.channel_classes ep.channel_class |> Option.get in
@@ -647,31 +583,15 @@ let verification_codegen_proc printer (graphs : EventGraph.event_graph_collectio
         let msg_def = List.nth cc.messages count in
         let msg_def = ParamConcretise.concretise_message cc.params ep.channel_params msg_def in
           match msg_def.sig_types with
-          | [] -> Printf.printf "parameter int N = #;\n"
+          | [] ->
+            failwith (Printf.sprintf "Cannot emit lifetime bound parameter for endpoint %s: message has no signal types." ep.name)
           | stype0 :: _ ->
             match number_of_lifetime_cycles stype0.lifetime.e with
-            | Some n -> Printf.printf "parameter int N = %d;\n" n 
-            | None -> Printf.printf "parameter int N = #;\n"
+            | Some n -> Printf.sprintf "parameter int N = %d;" n |> CodegenPrinter.print_line printer
+            | None -> failwith (Printf.sprintf "Cannot emit lifetime bound parameter for endpoint %s: lifetime bound is not statically determinable." ep.name)
       else ()
     in 
     print_declared_cycle_bound local_idx ep;
-
-
-    (* Old Print declaration of the FSM states *)
-    (* List.iter (fun (ep : Lang.endpoint_def) ->
-      let cc = MessageCollection.lookup_channel_class graphs.channel_classes ep.channel_class |> Option.get in
-        let msg_def = List.hd cc.messages in
-          let msg_def = ParamConcretise.concretise_message cc.params ep.channel_params msg_def in
-            CodegenPrinter.print_line printer (assertion_declare_states msg_def ep.dir)
-    ) g.messages.args; *)
-
-    (* List.iter (fun (ep : Lang.endpoint_def) ->
-      let cc = MessageCollection.lookup_channel_class graphs.channel_classes ep.channel_class |> Option.get in
-      List.iter (fun (msg_def : message_def) ->
-        let msg_def = ParamConcretise.concretise_message cc.params ep.channel_params msg_def in
-        CodegenPrinter.print_line printer (assertion_declare_states msg_def ep.dir)
-      ) cc.messages
-    ) g.messages.args; *)
 
     (* Match synchronisation and module direction *)  
     let assertion_declare_states (msg : message_def) (d : Lang.endpoint_direction) : string =
@@ -682,7 +602,7 @@ let verification_codegen_proc printer (graphs : EventGraph.event_graph_collectio
         | Right -> "typedef enum logic [1:0] {WAIT_ACK, DROP_VALID} state_t;")
       | (_, Dynamic) -> "typedef enum logic [1:0] {WAIT_ACK, DROP_ACK} state_t;"
       | (Dynamic, _) -> "typedef enum logic [1:0] {WAIT_REQ, DROP_VALID} state_t;"
-      | _ -> "None"
+      | _ -> failwith (Printf.sprintf "Cannot emit timing contracts for endpoint %s: timing contracts are unsupported for this combination" ep.name)
     in
 
     (* Print declaration of the FSM states *)
@@ -702,45 +622,20 @@ let verification_codegen_proc printer (graphs : EventGraph.event_graph_collectio
 
     (* Print the declarations of ports, ack, valid, data ... *)
     let _ = verification_codegen_ports printer graphs g.messages.args in
-    (
-      match g.extern_module, g.proc_body with
-      | _ ->
-        let initEvents = fst @@ List.hd g.threads in
-        codegen_endpoints printer graphs initEvents;
-    );
-  
+      let initEvents = fst @@ List.hd g.threads in
+      codegen_endpoints printer graphs initEvents;
+
     (* Retreive the user module name *)
     let s = AssertName.user_sv () in
     (* Print user module instantiation *)
     Printf.sprintf "%s user_sv (" s |> CodegenPrinter.print_line printer;
     let _ = verification_codegen_instantiations printer graphs g.messages.args in
-    (
-      match g.extern_module, g.proc_body with
-      | _ ->
-        let initEvents = fst @@ List.hd g.threads in
-        codegen_endpoints printer graphs initEvents;
-    );
     CodegenPrinter.print_line printer ~lvl_delta_pre:(-1) ~lvl_delta_post:1 ");";
 
     (* Print anvil module instantiation *)
     Printf.sprintf "%s anvil_sv (" g.name |> CodegenPrinter.print_line printer;
     let _ = verification_codegen_instantiations printer graphs g.messages.args in
-    (
-      match g.extern_module, g.proc_body with
-      | _ ->
-        let initEvents = fst @@ List.hd g.threads in
-        codegen_endpoints printer graphs initEvents;
-    );
     CodegenPrinter.print_line printer ~lvl_delta_pre:(-1) ~lvl_delta_post:1 ");";
-  
-    (* Probably can delete this :: to check if there is only one signal, will modify this *)
-    (* let only_one default = function
-      | x :: _ -> x
-      | [] -> default
-    in
-    let valid_name = only_one "" (CodegenPort.valid_port_names graphs.channel_classes g.messages.args) in 
-    let ack_name = only_one "" (CodegenPort.ack_port_names graphs.channel_classes g.messages.args) in 
-    let datas = only_one "" (CodegenPort.data_port_names graphs.channel_classes g.messages.args) in *)
 
     (* To get the correct signals to be included in the assertion *)
     let get_or_default default lst n =
@@ -976,8 +871,8 @@ let verification_codegen_proc printer (graphs : EventGraph.event_graph_collectio
             Printf.sprintf "`include \"syn_send_dynamic_user_sender.svh\"\n";
             Printf.sprintf "assert property (data_stable_N_cycles (state_curr, counter, %s))" data;
             Printf.sprintf "else $error(\"Assertion Failed: data_stable_N_cycles\");\n";
-            Printf.sprintf "assert property (valid_low_during_DROP_VALID (state_curr, %s)" valid_name;
-            Printf.sprintf "else $error(\"Assertion Failed: data_stable_N_cycles\");\n";
+            Printf.sprintf "assert property (valid_low_during_DROP_VALID (state_curr, %s))" valid_name;
+            Printf.sprintf "else $error(\"Assertion Failed: valid_low_during_DROP_VALID\");\n";
           ]
         | Right -> 
           let block = ff_block "WAIT_REQ" "DROP_VALID" in
@@ -998,15 +893,9 @@ let verification_codegen_proc printer (graphs : EventGraph.event_graph_collectio
             Printf.sprintf "assert property (data_stable_N_cycles (state_curr, counter, %s))" data;
             Printf.sprintf "else $error(\"Assertion Failed: data_stable_N_cycles\");\n";
           ])
-      | _ -> "None"
+      | _ -> failwith (Printf.sprintf "Cannot emit assertions for endpoint %s: unsupported timing-contract combination" ep.name)
     in
-    (* List.iter (fun (ep : Lang.endpoint_def) ->
-      let cc = MessageCollection.lookup_channel_class graphs.channel_classes ep.channel_class |> Option.get in
-        let msg_def = List.hd cc.messages in
-          let msg_def = ParamConcretise.concretise_message cc.params ep.channel_params msg_def in
-            CodegenPrinter.print_line printer (print_fsm_assertion msg_def ep.dir valid_name ack_name datas)
-    ) g.messages.args; *)
-
+    
     (* Print the Assertions *)
     let print_fsm_assertion count (ep : Lang.endpoint_def) =
       let cc = MessageCollection.lookup_channel_class graphs.channel_classes ep.channel_class |> Option.get in
@@ -1023,6 +912,11 @@ let verification_codegen_proc printer (graphs : EventGraph.event_graph_collectio
   | None ->
       ()
   done
+
+let verification_generate_preamble out =
+  [
+    "/*verilator lint_off DECLFILENAME*/"
+  ] |> List.iter (Printf.fprintf out "%s\n")
 
 let verification_generate_extern_import out file_name =
   In_channel.with_open_text file_name

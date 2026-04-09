@@ -114,7 +114,10 @@ let compile out config =
 
 let verification_compile out config =
   let open Config in
-  let toplevel_filename = List.hd config.input_filenames in
+  let toplevel_filename = if config.stdin && List.length config.input_filenames = 0
+    then "-"
+    else List.hd config.input_filenames
+  in
   let cunits = ref [] in
   (
     try parse_recursive cunits (ref Utils.StringSet.empty) config toplevel_filename
@@ -194,48 +197,43 @@ let verification_compile out config =
       )
     )
   done;
-  (* pull code from imported external files *)
-  let visited_extern_files = ref Utils.StringSet.empty in
-  let open Lang in
-  List.iter (fun (file_name, cunit) ->
-    List.iter (fun {is_extern; file_name = imp_file_name} ->
-      if is_extern then
-        let imp_file_name_canonical = canonicalise_file_name file_name imp_file_name in
-        if Utils.StringSet.mem imp_file_name_canonical !visited_extern_files |> not then (
-          visited_extern_files := Utils.StringSet.add imp_file_name_canonical !visited_extern_files;
-          try Codegen.verification_generate_extern_import out imp_file_name_canonical
-          with Sys_error msg -> raise_compile_error (Some file_name) [Except.Text msg]
-        )
-    ) cunit.imports
-  ) !cunits;
-  (* generate the code from event graphs *)
-  let all_collections = Queue.to_seq graph_collection_queue |> List.of_seq in
-  let all_event_graphs = List.concat_map (fun collection -> let open EventGraph in collection.event_graphs) all_collections in
-  List.iter (fun graphs ->
-    Codegen.verification_generate out config
-     {graphs with EventGraph.external_event_graphs = all_event_graphs}) all_collections
+  if config.just_check then
+    ()
+  else begin
+    (* generate preamble *)
+    Codegen.verification_generate_preamble out;
+    (* pull code from imported external files *)
+    let visited_extern_files = ref Utils.StringSet.empty in
+    let open Lang in
+    List.iter (fun (file_name, cunit) ->
+      List.iter (fun {is_extern; file_name = imp_file_name} ->
+        if is_extern then
+          let imp_file_name_canonical = canonicalise_file_name file_name imp_file_name in
+          if Utils.StringSet.mem imp_file_name_canonical !visited_extern_files |> not then (
+            visited_extern_files := Utils.StringSet.add imp_file_name_canonical !visited_extern_files;
+            try Codegen.verification_generate_extern_import out imp_file_name_canonical
+            with Sys_error msg -> raise_compile_error (Some file_name) [Except.Text msg]
+          )
+      ) cunit.imports
+    ) !cunits;
+    (* generate the code from event graphs *)
+    let all_collections = Queue.to_seq graph_collection_queue |> List.of_seq in
+    let all_event_graphs = List.concat_map (fun collection -> let open EventGraph in collection.event_graphs) all_collections in
+    List.iter (fun graphs ->
+      Codegen.verification_generate out config
+       {graphs with EventGraph.external_event_graphs = all_event_graphs}) all_collections
+  end
 
-let make_config (anvil_path : string) : Config.compile_config =
-  {
-    verbose = false;
-    stdin = false;
-    disable_lt_checks = false;
-    weak_typecasts = true;
-    opt_level = 2;
-    output_filename = None;
-    just_check = false;
-    two_round_graph = false;
-    json_output = false;
-    input_filenames = [anvil_path];
-    sv_extern_mode = "";
-  }
-  
+
 let verification_run (config : Config.compile_config) : unit =
   let open Config in
   match List.rev config.input_filenames with
   | anvil_file :: gen_sv_file :: user_sv_file :: _ ->
     AssertName.generate gen_sv_file user_sv_file;
-    let c = make_config anvil_file in
+    let c = { config with
+      input_filenames = [anvil_file];
+      output_filename = None;
+    } in
     (try verification_compile stdout c
     with
     | CompileError msg ->
