@@ -201,7 +201,7 @@ let verification_compile out config =
     ()
   else begin
     (* generate preamble *)
-    Codegen.verification_generate_preamble out;
+    ExternCodegen.verification_generate_preamble out;
     (* pull code from imported external files *)
     let visited_extern_files = ref Utils.StringSet.empty in
     let open Lang in
@@ -211,7 +211,7 @@ let verification_compile out config =
           let imp_file_name_canonical = canonicalise_file_name file_name imp_file_name in
           if Utils.StringSet.mem imp_file_name_canonical !visited_extern_files |> not then (
             visited_extern_files := Utils.StringSet.add imp_file_name_canonical !visited_extern_files;
-            try Codegen.verification_generate_extern_import out imp_file_name_canonical
+            try ExternCodegen.verification_generate_extern_import out imp_file_name_canonical
             with Sys_error msg -> raise_compile_error (Some file_name) [Except.Text msg]
           )
       ) cunit.imports
@@ -220,7 +220,7 @@ let verification_compile out config =
     let all_collections = Queue.to_seq graph_collection_queue |> List.of_seq in
     let all_event_graphs = List.concat_map (fun collection -> let open EventGraph in collection.event_graphs) all_collections in
     List.iter (fun graphs ->
-      Codegen.verification_generate out config
+      ExternCodegen.verification_generate out config
        {graphs with EventGraph.external_event_graphs = all_event_graphs}) all_collections
   end
 
@@ -228,8 +228,8 @@ let verification_compile out config =
 let verification_run (config : Config.compile_config) : unit =
   let open Config in
   match List.rev config.input_filenames with
-  | anvil_file :: gen_sv_file :: user_sv_file :: _ ->
-    AssertName.generate gen_sv_file user_sv_file;
+  | anvil_file :: user_sv_file :: _ ->
+    ExternName.generate user_sv_file;
     let c = { config with
       input_filenames = [anvil_file];
       output_filename = None;
@@ -242,12 +242,16 @@ let verification_run (config : Config.compile_config) : unit =
       List.iter (
         function
         | Text msg_text -> Printf.eprintf "%s\n" msg_text
-        | Codespan (file_name, span) -> (
-          let file_name = Option.get file_name in
-          Printf.eprintf "%s:%d:%d:\n" file_name span.st.pos_lnum (span.st.pos_cnum - span.st.pos_bol);
-        )
+        | Codespan (file_name, span) ->
+          let line = span.st.pos_lnum in
+          let col = span.st.pos_cnum - span.st.pos_bol in
+          match file_name with
+          | Some file_name ->
+              Printf.eprintf "%s:%d:%d:\n" file_name line col
+          | None ->
+              Printf.eprintf "<unknown>:%d:%d:\n" line col
       ) msg;
       exit 1)
   | _ ->
-    Printf.eprintf "Error: -sv-extern requires three input files: <anvil-file> <generated-sv-file> <user-sv-file>\n";
+    Printf.eprintf "Error: -sv-extern requires two input files: <anvil-file> <user-sv-file>\n";
     exit 1

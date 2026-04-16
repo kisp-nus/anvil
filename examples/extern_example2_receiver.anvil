@@ -1,0 +1,13 @@
+
+chan ch {
+    left res : (logic[8]@#3)
+}
+
+proc extern_example2_receiver (endp : left ch) {
+    reg data : logic[8];
+    loop {
+        let data = recv endp.res >>
+        dprint "Data Receive: %d" (data) >>
+        cycle 5
+    }
+}

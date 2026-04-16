@@ -12,7 +12,7 @@ property  ack_high_valid_low (valid, current_state, ack);
 endproperty
 
 property data_stable_N_cycles_after_ack_high (current_state, counter_0, data);
-    @(posedge clk_i) ((current_state==DROP_VALID || counter_0!=0) |-> (_endp_res_0 == $past(data)));
+    @(posedge clk_i) ((current_state==DROP_VALID || counter_0!=0) |-> (data == $past(data)));
 endproperty
 
 property wait_req_ack_low (valid, ack);

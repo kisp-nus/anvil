@@ -58,64 +58,44 @@ let assertformat (typedefs : TypedefMap.t) (macro_defs: macro_def list) port =
 let instanformat port =
   Printf.sprintf "%s" port.name
 
-let valid_port_names_from_endpoint
-    (channel_classes : channel_class_def list)
-    (endpoint : endpoint_def)
-  : identifier list =
+let valid_port_names (channel_classes : channel_class_def list) (ep : Lang.endpoint_def) local_idx : string option =
   let cc =
-    Option.get (MessageCollection.lookup_channel_class channel_classes endpoint.channel_class)
+    MessageCollection.lookup_channel_class channel_classes ep.channel_class
+    |> Option.get
   in
-  cc.messages
-  |> List.filter (fun msg ->
-       let msg = ParamConcretise.concretise_message cc.params endpoint.channel_params msg in
-       message_has_valid_port msg
-     )
-  |> List.map (fun msg ->
-       let msg = ParamConcretise.concretise_message cc.params endpoint.channel_params msg in
-       CodegenFormat.format_msg_valid_signal_name endpoint.name msg.name
-     )
+  let msg_def = List.nth cc.messages local_idx in
+  let msg_def = ParamConcretise.concretise_message cc.params ep.channel_params msg_def in
+  if message_has_valid_port msg_def then
+    Some (CodegenFormat.format_msg_valid_signal_name ep.name msg_def.name)
+  else
+    None
 
-let valid_port_names
-    (channel_classes : channel_class_def list)
-    (endpoints : endpoint_def list)
-  : identifier list =
-  List.concat_map (valid_port_names_from_endpoint channel_classes) endpoints
-
-let ack_port_names_from_endpoint
-    (channel_classes : channel_class_def list)
-    (endpoint : endpoint_def)
-  : identifier list =
+let ack_port_names (channel_classes : channel_class_def list) (ep : Lang.endpoint_def) local_idx : string option =
   let cc =
-    Option.get (MessageCollection.lookup_channel_class channel_classes endpoint.channel_class)
+    MessageCollection.lookup_channel_class channel_classes ep.channel_class
+    |> Option.get
   in
-  cc.messages
-  |> List.filter (fun msg ->
-       let msg = ParamConcretise.concretise_message cc.params endpoint.channel_params msg in
-       message_has_ack_port msg
-     )
-  |> List.map (fun msg ->
-       let msg = ParamConcretise.concretise_message cc.params endpoint.channel_params msg in
-       CodegenFormat.format_msg_ack_signal_name endpoint.name msg.name
-     )
+  let msg_def = List.nth cc.messages local_idx in
+  let msg_def = ParamConcretise.concretise_message cc.params ep.channel_params msg_def in
+  if message_has_ack_port msg_def then
+    Some (CodegenFormat.format_msg_ack_signal_name ep.name msg_def.name)
+  else
+    None
 
-let ack_port_names
-    (channel_classes : channel_class_def list)
-    (endpoints : endpoint_def list)
-  : identifier list =
-  List.concat_map (ack_port_names_from_endpoint channel_classes) endpoints
-
-let data_port_names (channel_classes : channel_class_def list)
-                    (endpoints : endpoint_def list)
-  : identifier list =
-  let data_names_from_endpoint (endpoint : endpoint_def) =
-    let cc =
-      Option.get (MessageCollection.lookup_channel_class channel_classes endpoint.channel_class)
-    in
-    List.concat_map (fun (msg : message_def) ->
-      let msg = ParamConcretise.concretise_message cc.params endpoint.channel_params msg in
-      List.mapi (fun i (_stype : sig_type_chan_local) ->
-        CodegenFormat.format_msg_data_signal_name endpoint.name msg.name i
-      ) msg.sig_types
-    ) cc.messages
+let data_port_names (channel_classes : channel_class_def list) (ep : Lang.endpoint_def) local_idx =
+  let cc =
+    MessageCollection.lookup_channel_class channel_classes ep.channel_class
+    |> Option.get
   in
-  List.concat_map data_names_from_endpoint endpoints
+  let msg_def = List.nth cc.messages local_idx in
+  let msg_def = ParamConcretise.concretise_message cc.params ep.channel_params msg_def in
+  let (_, names_rev) =
+    List.fold_left (fun (n, acc) (stype : sig_type_chan_local) ->
+      if stype.dtype = Lang.unit_dtype then
+        (n, acc)
+      else
+        (n + 1,
+         CodegenFormat.format_msg_data_signal_name ep.name msg_def.name n :: acc)
+    ) (0, []) msg_def.sig_types
+  in
+  List.rev names_rev
