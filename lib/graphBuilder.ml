@@ -164,7 +164,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
     let err_string = DTypeCheck.fmt_assign lval lvi.lval_dtype td.ld.dtype in
     check_dtype err_string (Some lvi.lval_dtype) td.ld.dtype e.span ci.file_name ci.weak_typecasts ci.typedefs ci.macro_defs;
     ctx.current.actions <- (RegAssign (lvi, td.ld) |> tag_with_span e.span)::ctx.current.actions;
-    AstAnnotator.attach_event e ctx.current None (Some 1);
+    AstAnnotator.attach_event e ctx.current None (Some [DelayConst 1]);
     Typing.cycles_data graph 1 ctx.current
   | Call (id, arg_list) ->
       let func = List.find_opt (fun (f: Lang.func_def) -> f.name = id) ci.func_defs
@@ -325,7 +325,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
     Typing.immediate_data graph (Some msg_ack_port) `Logic ctx.current
   | Cycle n ->
     let data = Typing.cycles_data graph n ctx.current in
-    AstAnnotator.attach_event e ctx.current None (Some n);
+    AstAnnotator.attach_event e ctx.current None (Some [DelayConst n]);
     data
   | IfExpr (e1, e2, e3) ->
     let td1 = construct_graphIR graph ci ctx e1 in
@@ -952,5 +952,4 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
   | Tuple _ ->
     raise (event_graph_error_default "Unimplemented expression!" e.span);
     Typing.const_data graph None unit_dtype ctx.current (* dummy return *)
-
 

@@ -12,7 +12,7 @@ let ast_json_schema_version_string =
   Printf.sprintf "v%d.%d.%d%s" ast_major_version ast_minor_version ast_patch_version wip_str
 
 
-(* Symbolic sum type for representing cycle delays with unknowns (e.g., N_0 + 1) *)
+(* Symbolic sum type for representing cycle delays with unknowns (e.g., n0 + 1) *)
 type cycle_time_sum_term =
   | CycleConstTime of int
   | CycleUnknownTime of string
@@ -20,8 +20,6 @@ type cycle_time_sum_term =
   | CycleMaxTime of string * cycle_time_sum list
 
 and cycle_time_sum = cycle_time_sum_term list
-
-type optionable_cycle_time_sum = cycle_time_sum_term option list
 
 (* Helper functions for cycle time symbolic sums *)
 let rec simplify_cycle_time_sum (terms: cycle_time_sum) : cycle_time_sum =
@@ -218,11 +216,12 @@ let rec extend_cycle_time_sums (terms1: cycle_time_sum) (terms2: cycle_time_sum)
   | CycleOrTime sums :: rest -> (or_cycle_time_sum sums) @ (extend_cycle_time_sums rest terms2)
   | CycleMaxTime (s, ts) :: rest -> (max_cycle_time_sum s ts) @ (extend_cycle_time_sums rest terms2)
 
-
-
-(* Global mapping from (tid, eid, to_eid option) to symbolic sum consumed by that action *)
-(* This is populated during event graph processing and used when converting AST nodes *)
-let global_event_id_to_unknown_cycles_map : ((int * int * int option), cycle_time_sum) Hashtbl.t = Hashtbl.create 100
+let cycle_time_sum_of_exec_delay (delay: Lang.exec_delay) : cycle_time_sum =
+  List.fold_left (fun acc term ->
+    match term with
+    | DelayConst n -> add_const_to_cycle_time_sum n acc
+    | DelaySym s -> add_unknown_to_cycle_time_sum s acc
+  ) [] delay
 
 
 (* Helper functions for constructing Yojson values *)
@@ -294,17 +293,12 @@ let ast_node_to_yojson f (n: 'a ast_node) = kind "ast_node" (
     let sp = ("span", code_span_to_yojson n.span) in
     let dt = ("data", f n.d) in
     let eid = ("event", match n.action_event with
-      | Some (tid, eid, sus_to_eid, blocking_cycles) ->
+      | Some (tid, eid, sus_to_eid, delay_to_exec) ->
         let live_to_eid_field = (match sus_to_eid with
           | Some sustained_to_eid -> [ ("live_to_eid", int sustained_to_eid) ]
           | None -> []
         ) in
-        let exec_delay_field : (string * Yojson.Safe.t) list =
-          let lookup = Hashtbl.find_opt global_event_id_to_unknown_cycles_map (tid, eid, sus_to_eid) in
-          match blocking_cycles, lookup with
-          | _, Some c -> [ ("delay_to_exec", symbolic_sum_to_yojson c) ]
-          | n, _ -> [ ("delay_to_exec", symbolic_sum_to_yojson (add_const_to_cycle_time_sum n [])) ]
-        in
+        let exec_delay_field = [ ("delay_to_exec", symbolic_sum_to_yojson (cycle_time_sum_of_exec_delay delay_to_exec)) ] in
         assoc (
           [
             ("tid", int tid);
@@ -1032,9 +1026,6 @@ let func_def_to_yojson (f: func_def) =
 
 let event_graph_collection_to_yojson (gc: EventGraph.event_graph_collection): Yojson.Safe.t list =
 
-  (* Note: We do NOT clear the map here, as it needs to accumulate entries from all event graph collections
-     in this compilation unit. The map is cleared once at the top level in compilation_unit_with_event_graph_to_yojson. *)
-
   (* Counter for generating unique symbolic variable names *)
   let symbolic_counter = ref 0 in
   let fresh_symbolic_var prefix = 
@@ -1047,46 +1038,29 @@ let event_graph_collection_to_yojson (gc: EventGraph.event_graph_collection): Yo
     let events = t.events in
     let tid = t.thread_id in
 
-    (* First pass: identify all dynamic operations and assign symbolic variables *)
-    let event_source_to_unknown_cycles_map = Hashtbl.create (List.length events) in
-    let process_event_for_symbolic_vars (e: EventGraph.event) =
-      match e.source with
-      | `Seq (e0, atomic_delay) ->
-          (match atomic_delay with
-          | `Send _ | `Recv _ | `Sync _ ->
-              let var = fresh_symbolic_var "n" in
-              let symbolic_sum = [CycleUnknownTime var] in
-              Hashtbl.add event_source_to_unknown_cycles_map e.source symbolic_sum;
-              Hashtbl.add global_event_id_to_unknown_cycles_map (tid, e0.id, Some e.id) symbolic_sum
-          | _ -> ())
-      | _ -> ()
-    in
-    List.iter process_event_for_symbolic_vars events;
-
-    (* Second pass: compute delays for each event, using the symbolic variables where needed *)
-    let _delays_memo = Hashtbl.create (5 * List.length events) in
-    let rec compute_delays (src_e: EventGraph.event_source) : cycle_time_sum =
-      if Hashtbl.mem _delays_memo src_e then
-        Hashtbl.find _delays_memo src_e
+    (* Compute delays for each event for event graph supplementary output. *)
+    let _delays_memo : (int, cycle_time_sum) Hashtbl.t = Hashtbl.create (5 * List.length events) in
+    let rec compute_delays (ev: EventGraph.event) : cycle_time_sum =
+      if Hashtbl.mem _delays_memo ev.id then
+        Hashtbl.find _delays_memo ev.id
       else
-        let delays = match src_e with
-        | `Root None -> []
-        | `Root Some (e0, _) -> compute_delays e0.source
+        let delays = match ev.source with
+        | `Root None ->
+            []
+        | `Root Some (e0, _) ->
+            compute_delays e0
         | `Seq (e0, atomic_delay) ->
-            let adder (sum: cycle_time_sum) = (
-              match atomic_delay with
-                | `Cycles c -> add_const_to_cycle_time_sum c sum
-                | `Send _ | `Recv _ | `Sync _ ->
-                    (* Look up the symbolic variable we assigned in the first pass *)
-                    (match Hashtbl.find_opt event_source_to_unknown_cycles_map src_e with
-                    | Some sym_sum -> extend_cycle_time_sums sym_sum sum
-                    | None -> sum) (* Should not happen *)
-              ) in
-            adder (compute_delays e0.source)
+            let sum = compute_delays e0 in
+            (match atomic_delay with
+            | `Cycles c -> add_const_to_cycle_time_sum c sum
+            | `Send _ | `Recv _ | `Sync _ ->
+                match AstAnnotator.lookup_seq_delay_symbol tid e0.id ev.id with
+                | Some sym -> extend_cycle_time_sums [CycleUnknownTime sym] sum
+                | None -> sum)
         | `Later (e1, e2) ->
             (* Later of the 2 events *)
-            let e1_delays = compute_delays e1.source in
-            let e2_delays = compute_delays e2.source in
+            let e1_delays = compute_delays e1 in
+            let e2_delays = compute_delays e2 in
 
             (* Compute the max of the two set of delays *)
             let new_max_var = fresh_symbolic_var "max" in
@@ -1096,11 +1070,11 @@ let event_graph_collection_to_yojson (gc: EventGraph.event_graph_collection): Yo
         | `Branch (_, branch_info) ->
             (* A Branch event is reached when one of the branches completes (not when the branch point starts). *)
             let other_events = branch_info.branches_val in
-            let other_delays = List.map (fun (oe: EventGraph.event) -> compute_delays oe.source) other_events in
+            let other_delays = List.map (fun (oe: EventGraph.event) -> compute_delays oe) other_events in
             let unique_other_delays = List.fold_left (fun acc d -> if List.exists (equal_cycle_time_sums d) acc then acc else d :: acc) [] other_delays in
             or_cycle_time_sum unique_other_delays
         in
-        Hashtbl.add _delays_memo src_e delays;
+        Hashtbl.add _delays_memo ev.id delays;
         delays
     in
 
@@ -1110,7 +1084,7 @@ let event_graph_collection_to_yojson (gc: EventGraph.event_graph_collection): Yo
         ("eid", int e.id)
       ] in
 
-      let delays_json = symbolic_sum_to_yojson (compute_delays e.source) in
+      let delays_json = symbolic_sum_to_yojson (compute_delays e) in
 
       if List.is_empty e.outs
       then assoc [
@@ -1162,12 +1136,8 @@ let compilation_unit_with_supplementary_data_to_yojson (c: compilation_unit) (sd
 
 
 let compilation_unit_with_event_graph_to_yojson (c: compilation_unit) (gcl: EventGraph.event_graph_collection list) =
-  (* Clear the global map once at the start, before processing all event graph collections *)
-  Hashtbl.clear global_event_id_to_unknown_cycles_map;
   let event_graphs = List.map (fun gc -> event_graph_collection_to_yojson gc) gcl |> List.concat in
   compilation_unit_with_supplementary_data_to_yojson c [("event_graphs", `List event_graphs)]
 
 let compilation_unit_to_yojson (c: compilation_unit) =
   compilation_unit_with_supplementary_data_to_yojson c []
-
-

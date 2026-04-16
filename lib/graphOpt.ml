@@ -431,15 +431,15 @@ module CombSimplPass = struct
          overwrote entries in event_arr_old with new IDs. *)
       let update_node_ast_annotator_action_event target_eid (node : _ Lang.ast_node) =
         match node.action_event with
-        | Some (tid, _eid, Some ueid, c) when ueid >= 0 && ueid < Array.length event_arr_old ->
+        | Some (tid, _eid, Some ueid, delay_to_exec) when ueid >= 0 && ueid < Array.length event_arr_old ->
           let f = find_ufs event_ufs ueid in
           let new_ueid =
             if f >= 0 && to_keep.(f) then Some event_arr_old.(f).id
             else Some ueid (* keep original if target not found *)
           in
-          node.action_event <- Some (tid, target_eid, new_ueid, c)
-        | Some (tid, _eid, ueid, c) ->
-          node.action_event <- Some (tid, target_eid, ueid, c)
+          node.action_event <- Some (tid, target_eid, new_ueid, delay_to_exec)
+        | Some (tid, _eid, ueid, delay_to_exec) ->
+          node.action_event <- Some (tid, target_eid, ueid, delay_to_exec)
         | None -> ()
       in
 
