@@ -422,24 +422,14 @@ module CombSimplPass = struct
           MatchCases (List.map replace_lowering_data cases)
       in
 
-      (* Update both eid and ueid in action_event on annotated AST nodes to
-         reflect event renumbering/merging within this optimization pass.
+      (* Update eid in action_event on annotated AST nodes to reflect
+         event renumbering/merging within this optimization pass.
          target_eid is the new event id that owns this node (differs for
-         kept vs merged-away events).
-         For ueid, we use the union-find directly on the old ueid rather than
-         going through the mutated event_arr_old, since renumbering already
-         overwrote entries in event_arr_old with new IDs. *)
+         kept vs merged-away events). *)
       let update_node_ast_annotator_action_event target_eid (node : _ Lang.ast_node) =
         match node.action_event with
-        | Some (tid, _eid, Some ueid, delay_to_exec) when ueid >= 0 && ueid < Array.length event_arr_old ->
-          let f = find_ufs event_ufs ueid in
-          let new_ueid =
-            if f >= 0 && to_keep.(f) then Some event_arr_old.(f).id
-            else Some ueid (* keep original if target not found *)
-          in
-          node.action_event <- Some (tid, target_eid, new_ueid, delay_to_exec)
-        | Some (tid, _eid, ueid, delay_to_exec) ->
-          node.action_event <- Some (tid, target_eid, ueid, delay_to_exec)
+        | Some (tid, _eid, delay_to_exec) ->
+          node.action_event <- Some (tid, target_eid, delay_to_exec)
         | None -> ()
       in
 

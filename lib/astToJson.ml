@@ -2,6 +2,13 @@
 
 open Lang
 
+type event_json_context = {
+  graph_by_tid : (int, EventGraph.event_graph list) Hashtbl.t;
+  channel_classes : Lang.channel_class_def list;
+}
+
+let current_event_json_context : event_json_context option ref = ref None
+
 let ast_major_version = 0 (* incr w/ breaking changes *)
 let ast_minor_version = 1 (* incr w/ non-breaking additions *)
 let ast_patch_version = 0 (* incr w/ non-breaking bug fixes *)
@@ -223,6 +230,171 @@ let cycle_time_sum_of_exec_delay (delay: Lang.exec_delay) : cycle_time_sum =
     | DelaySym s -> add_unknown_to_cycle_time_sum s acc
   ) [] delay
 
+let atomic_delay_to_cycle_time_sum (tid : int) (from_ev : EventGraph.event) (to_ev : EventGraph.event) (ad : EventGraph.atomic_delay) : cycle_time_sum =
+  match ad with
+  | `Cycles c -> add_const_to_cycle_time_sum c []
+  | `Send _ | `Recv _ | `Sync _ ->
+    (
+      match AstAnnotator.lookup_seq_delay_symbol tid from_ev.id to_ev.id with
+      | Some sym -> [CycleUnknownTime sym]
+      | None -> []
+    )
+
+let rel_delays_from_event (graph : EventGraph.event_graph) (origin : EventGraph.event) : (int, cycle_time_sum) Hashtbl.t =
+  let max_eid = List.fold_left (fun n (e : EventGraph.event) -> max n e.id) 0 graph.events in
+  let dist : cycle_time_sum option array = Array.make (max_eid + 1) None in
+  let set_dist (ev : EventGraph.event) d = if ev.id >= 0 && ev.id <= max_eid then dist.(ev.id) <- Some d in
+  let get_dist (ev : EventGraph.event) = if ev.id >= 0 && ev.id <= max_eid then dist.(ev.id) else None in
+
+  set_dist origin [];
+  List.iter (fun e -> set_dist e []) (GraphAnalysis.event_predecessors origin);
+
+  let events_topo = List.rev graph.events in
+  List.iter (fun (ev : EventGraph.event) ->
+    if Option.is_none (get_dist ev) then
+      let d =
+        match ev.source with
+        | `Root None -> None
+        | `Root (Some (e0, _)) -> get_dist e0
+        | `Seq (e0, ad) ->
+          Option.map (fun d0 -> extend_cycle_time_sums (atomic_delay_to_cycle_time_sum graph.thread_id e0 ev ad) d0) (get_dist e0)
+        | `Later (e1, e2) ->
+          (
+            match get_dist e1, get_dist e2 with
+            | Some d1, Some d2 -> Some (max_cycle_time_sum (Printf.sprintf "max_rel_%d_%d" origin.id ev.id) [d1; d2])
+            | _ -> None
+          )
+        | `Branch (_, {branches_val; _}) ->
+          let ds = List.filter_map get_dist branches_val in
+          (
+            match ds with
+            | [] -> None
+            | [d] -> Some d
+            | _ ->
+              let unique_ds = List.fold_left (fun acc d -> if List.exists (equal_cycle_time_sums d) acc then acc else d::acc) [] ds in
+              Some (or_cycle_time_sum unique_ds)
+          )
+      in
+      (match d with Some d' -> set_dist ev d' | None -> ())
+  ) events_topo;
+
+  let memo = Hashtbl.create (2 * List.length graph.events + 1) in
+  List.iter (fun (ev : EventGraph.event) ->
+    match get_dist ev with
+    | Some d -> Hashtbl.replace memo ev.id d
+    | None -> ()
+  ) graph.events;
+  memo
+
+let sustain_lifetime_for_msg (ctx : event_json_context) (tid : int) (base_eid : int) (msg_spec : message_specifier) : cycle_time_sum option =
+  let graphs = Hashtbl.find_opt ctx.graph_by_tid tid |> Option.value ~default:[] in
+  let lookup_message_allow_foreign (graph : EventGraph.event_graph) (spec : message_specifier) =
+    let ( let* ) = Option.bind in
+    let* endpoint = MessageCollection.lookup_endpoint graph.messages spec.endpoint in
+    let* cc = MessageCollection.lookup_channel_class ctx.channel_classes endpoint.channel_class in
+    let* msg = List.find_opt (fun (m : message_def) -> m.name = spec.msg) cc.messages in
+    let* msg = Some {msg with dir = get_message_direction msg.dir endpoint.dir} in
+    Some (ParamConcretise.concretise_message cc.params endpoint.channel_params msg)
+  in
+  let resolve_message (graph : EventGraph.event_graph) (spec : message_specifier) =
+    match MessageCollection.lookup_message graph.messages spec ctx.channel_classes with
+    | Some m -> Some m
+    | None -> lookup_message_allow_foreign graph spec
+  in
+  let lookup_message_with_endpoint_aliases (graph : EventGraph.event_graph) (spec : message_specifier) =
+    let direct = resolve_message graph spec in
+    match direct with
+    | Some msg_def -> Some (spec, msg_def)
+    | None ->
+      let endpoint_names = List.map (fun (ep : endpoint_def) -> ep.name) (graph.messages.args @ graph.messages.endpoints) in
+      let rec try_endpoints = function
+        | [] -> None
+        | ep_name::rest ->
+          let spec' = {spec with endpoint = ep_name} in
+          (
+            match resolve_message graph spec' with
+            | Some msg_def -> Some (spec', msg_def)
+            | None -> try_endpoints rest
+          )
+      in
+      try_endpoints endpoint_names
+  in
+  let rec try_graphs = function
+    | [] -> None
+    | (graph : EventGraph.event_graph)::rest ->
+      let base_ev_opt = List.find_opt (fun (ev : EventGraph.event) -> ev.id = base_eid) graph.events in
+      (
+        match base_ev_opt, lookup_message_with_endpoint_aliases graph msg_spec with
+        | Some base_ev, Some (msg_spec', msg_def) ->
+          let stype = List.hd msg_def.sig_types in
+          let dpat = delay_pat_globalise msg_spec'.endpoint stype.lifetime.e in
+          let rel_delays = rel_delays_from_event graph base_ev in
+          let computed =
+            match dpat with
+            | `Cycles n -> Some (add_const_to_cycle_time_sum n [])
+            | `Eternal -> Some []
+            | `Message_with_offset (msg, off, true) ->
+              let first_events = GraphAnalysis.events_first_msg graph.events base_ev msg in
+              let sums =
+                List.filter_map (fun (ev : EventGraph.event) ->
+                  Hashtbl.find_opt rel_delays ev.id
+                  |> Option.map (fun d -> add_const_to_cycle_time_sum off d)
+                ) first_events
+              in
+              let direct =
+                match sums with
+                | [] -> None
+                | [single] -> Some single
+                | _ -> Some (or_cycle_time_sum sums)
+              in
+              (
+                match direct with
+                | Some _ -> direct
+                | None ->
+                  let recurse_event = List.find_opt (fun (e : EventGraph.event) -> e.is_recurse) graph.events in
+                  let root_event = List.find_opt (fun (e : EventGraph.event) -> e.source = `Root None) graph.events in
+                  match recurse_event, root_event with
+                  | Some recurse_ev, Some root_ev ->
+                    let base_to_recurse = Hashtbl.find_opt rel_delays recurse_ev.id in
+                    let root_rel_delays = rel_delays_from_event graph root_ev in
+                    let msg_events = GraphAnalysis.events_with_msg graph.events msg in
+                    let sums_from_loop = List.filter_map (fun (ev : EventGraph.event) ->
+                      match base_to_recurse, Hashtbl.find_opt root_rel_delays ev.id with
+                      | Some d1, Some d2 -> Some (add_const_to_cycle_time_sum off (extend_cycle_time_sums d2 d1))
+                      | _ -> None
+                    ) msg_events in
+                    (
+                      match sums_from_loop with
+                      | [] -> None
+                      | [single] -> Some single
+                      | _ -> Some (or_cycle_time_sum sums_from_loop)
+                    )
+                  | _ -> None
+            )
+            | `Message_with_offset (_msg, _off, false) ->
+              None
+          in
+          (
+            match computed with
+            | Some _ -> computed
+            | None -> try_graphs rest
+          )
+        | _ -> try_graphs rest
+      )
+  in
+  try_graphs graphs
+
+let sustain_lifetime_of_expr_event (expr : expr) (tid : int) (eid : int) : cycle_time_sum option =
+  match !current_event_json_context with
+  | Some ctx ->
+    (
+      match expr with
+      | Send sp -> sustain_lifetime_for_msg ctx tid eid sp.send_msg_spec
+      | Recv rp -> sustain_lifetime_for_msg ctx tid eid rp.recv_msg_spec
+      | _ -> None
+    )
+  | _ -> None
+
 
 (* Helper functions for constructing Yojson values *)
 let assoc l = `Assoc l
@@ -293,17 +465,13 @@ let ast_node_to_yojson f (n: 'a ast_node) = kind "ast_node" (
     let sp = ("span", code_span_to_yojson n.span) in
     let dt = ("data", f n.d) in
     let eid = ("event", match n.action_event with
-      | Some (tid, eid, sus_to_eid, delay_to_exec) ->
-        let live_to_eid_field = (match sus_to_eid with
-          | Some sustained_to_eid -> [ ("live_to_eid", int sustained_to_eid) ]
-          | None -> []
-        ) in
+      | Some (tid, eid, delay_to_exec) ->
         let exec_delay_field = [ ("delay_to_exec", symbolic_sum_to_yojson (cycle_time_sum_of_exec_delay delay_to_exec)) ] in
         assoc (
           [
             ("tid", int tid);
             ("eid", int eid);
-          ] @ live_to_eid_field @ exec_delay_field
+          ] @ exec_delay_field
         )
       | None -> `Null
     ) in
@@ -862,7 +1030,33 @@ and expr_to_yojson (x: expr) = let result = match x with
   | Recurse -> [ ("type", str "recurse") ]
   in kind "expr" result
 
-and expr_node_to_yojson (x: expr_node) = ast_node_to_yojson expr_to_yojson x
+and expr_node_to_yojson (x: expr_node) = kind "ast_node" (
+    let sp = ("span", code_span_to_yojson x.span) in
+    let dt = ("data", expr_to_yojson x.d) in
+    let eid = ("event", match x.action_event with
+      | Some (tid, eid, delay_to_exec) ->
+        let sustain_lifetime_field =
+          match sustain_lifetime_of_expr_event x.d tid eid with
+          | Some lifetime -> [ ("sustain_lifetime", symbolic_sum_to_yojson lifetime) ]
+          | None -> []
+        in
+        let exec_delay_field = [ ("delay_to_exec", symbolic_sum_to_yojson (cycle_time_sum_of_exec_delay delay_to_exec)) ] in
+        assoc (
+          [
+            ("tid", int tid);
+            ("eid", int eid);
+          ] @ sustain_lifetime_field @ exec_delay_field
+        )
+      | None -> `Null
+    ) in
+    let def_spans = ("def_span", list_rev def_span_to_yojson x.def_span) in
+
+    match x.action_event, x.def_span with
+    | Some _, [] -> [dt; sp; eid]
+    | Some _, _ -> [dt; sp; eid; def_spans]
+    | None, [] -> [dt; sp]
+    | None, _ -> [dt; sp; def_spans]
+  )
 
 and lvalue_to_yojson (x: lvalue) = let result = match x with
   | Reg id -> [ ("type", str "reg"); ("id", identifier_to_yojson id) ]
@@ -1136,8 +1330,21 @@ let compilation_unit_with_supplementary_data_to_yojson (c: compilation_unit) (sd
 
 
 let compilation_unit_with_event_graph_to_yojson (c: compilation_unit) (gcl: EventGraph.event_graph_collection list) =
+  let prev_ctx = !current_event_json_context in
+  let graph_by_tid = Hashtbl.create 16 in
+  List.iter (fun (gcol : EventGraph.event_graph_collection) ->
+    List.iter (fun (pg : EventGraph.proc_graph) ->
+      List.iter (fun ((g : EventGraph.event_graph), _rst) ->
+        let current = Hashtbl.find_opt graph_by_tid g.thread_id |> Option.value ~default:[] in
+        Hashtbl.replace graph_by_tid g.thread_id (g::current)
+      ) pg.threads
+    ) gcol.event_graphs
+  ) gcl;
+  current_event_json_context := Some {graph_by_tid; channel_classes = c.channel_classes};
   let event_graphs = List.map (fun gc -> event_graph_collection_to_yojson gc) gcl |> List.concat in
-  compilation_unit_with_supplementary_data_to_yojson c [("event_graphs", `List event_graphs)]
+  let result = compilation_unit_with_supplementary_data_to_yojson c [("event_graphs", `List event_graphs)] in
+  current_event_json_context := prev_ctx;
+  result
 
 let compilation_unit_to_yojson (c: compilation_unit) =
   compilation_unit_with_supplementary_data_to_yojson c []

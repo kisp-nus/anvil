@@ -18,11 +18,11 @@ let lookup_seq_delay_symbol tid from_eid to_eid =
   Hashtbl.find_opt seq_delay_symbol_map (tid, from_eid, to_eid)
 
 let annotate_delay_to_exec (gcol : EventGraph.event_graph_collection) =
-  let update_nodes_for_seq_delay (thread_id : int) (start_eid : int) (end_eid : int) (delay : Lang.exec_delay) (nodes : Lang.expr_node list) =
+  let update_nodes_for_seq_delay (thread_id : int) (start_eid : int) (delay : Lang.exec_delay) (nodes : Lang.expr_node list) =
     List.iter (fun (node : Lang.expr_node) ->
       match node.action_event with
-      | Some (tid, eid, Some ueid, _) when tid = thread_id && eid = start_eid && ueid = end_eid ->
-        node.action_event <- Some (tid, eid, Some ueid, delay)
+      | Some (tid, eid, _) when tid = thread_id && eid = start_eid ->
+        node.action_event <- Some (tid, eid, delay)
       | _ -> ()
     ) nodes
   in
@@ -34,7 +34,7 @@ let annotate_delay_to_exec (gcol : EventGraph.event_graph_collection) =
         let sym = fresh_symbolic_delay_var () in
         let delay = [Lang.DelaySym sym] in
         Hashtbl.replace seq_delay_symbol_map (ev.graph.thread_id, start_ev.id, ev.id) sym;
-        update_nodes_for_seq_delay ev.graph.thread_id start_ev.id ev.id delay all_nodes
+        update_nodes_for_seq_delay ev.graph.thread_id start_ev.id delay all_nodes
       | _ -> ())
     | `Seq (start_ev, `Recv msg_spec) ->
       (match lookup_message msg_spec with
@@ -42,13 +42,13 @@ let annotate_delay_to_exec (gcol : EventGraph.event_graph_collection) =
         let sym = fresh_symbolic_delay_var () in
         let delay = [Lang.DelaySym sym] in
         Hashtbl.replace seq_delay_symbol_map (ev.graph.thread_id, start_ev.id, ev.id) sym;
-        update_nodes_for_seq_delay ev.graph.thread_id start_ev.id ev.id delay all_nodes
+        update_nodes_for_seq_delay ev.graph.thread_id start_ev.id delay all_nodes
       | _ -> ())
     | `Seq (start_ev, `Sync _) ->
       let sym = fresh_symbolic_delay_var () in
       let delay = [Lang.DelaySym sym] in
       Hashtbl.replace seq_delay_symbol_map (ev.graph.thread_id, start_ev.id, ev.id) sym;
-      update_nodes_for_seq_delay ev.graph.thread_id start_ev.id ev.id delay all_nodes
+      update_nodes_for_seq_delay ev.graph.thread_id start_ev.id delay all_nodes
     | _ -> ()
   in
   List.iter (fun (pg : EventGraph.proc_graph) ->
@@ -235,10 +235,10 @@ let attach_def_from_top_level_type_with_fields (target : 'a Lang.ast_node) (sour
 let attach_event (target : 'a Lang.ast_node) (source : EventGraph.event) (sustained_until : EventGraph.event option) (delay_to_exec : Lang.exec_delay option) =
   if not !enabled then () else
 
+  let _ = sustained_until in
   target.action_event <- Some (
     source.graph.thread_id,
     source.id,
-    Option.map (fun (e: EventGraph.event) -> e.id) sustained_until,
     match delay_to_exec with | Some d -> d | None -> []
   );
   source.expr_nodes <- target :: source.expr_nodes

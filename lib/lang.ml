@@ -31,8 +31,8 @@ type exec_delay = exec_delay_term list
 type 'a ast_node = {
   span : code_span;
   mutable def_span : def_span list; (* the definitions associated with this node (if applicable) *)
-  mutable action_event : (int * int * int option * exec_delay) option;
-    (** opt (thread id, event id, sustained-till-event id, delay_to_exec) *)
+  mutable action_event : (int * int * exec_delay) option;
+    (** opt (thread id, event id, delay_to_exec) *)
     (* if applicable, denotes the event where this action is executed in, within the node's process *)
   d : 'a;
 }
