@@ -1,0 +1,16 @@
+Data Receive:   1
+Data Receive:   2
+Data Receive:   3
+Data Receive:   4
+Data Receive:   5
+Data Receive:   6
+Data Receive:   7
+Data Receive:   8
+Data Receive:   9
+Data Receive:  10
+Data Receive:  11
+Data Receive:  12
+- extern_example4_sender_assert.sv:15: Verilog $finish
+- S i m u l a t i o n   R e p o r t: Verilator 5.024 2024-04-05
+- Verilator: $finish at 515ps; walltime 0.001 s; speed 0.000 s/s
+- Verilator: cpu 0.000 s on 1 threads; alloced 57 MB

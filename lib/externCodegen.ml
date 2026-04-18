@@ -36,21 +36,25 @@ let verification_codegen_ports printer (graphs : event_graph_collection)
 let verification_codegen_instantiations printer (graphs : event_graph_collection)
                       (endpoints : endpoint_def list) =
   let port_list = CodegenPort.gather_ports graphs.channel_classes endpoints in
-  CodegenPrinter.print_line printer ".clk_i(clk_i),";
-  CodegenPrinter.print_line printer ".rst_ni(rst_ni),";
-  let rec print_port_list port_list =
-  match port_list with
-  | [] -> ()
-  | port :: [] ->
-    let s = CodegenPort.instanformat port in 
-    Printf.sprintf ".%s (%s)" s s |> CodegenPrinter.print_line printer
-  | port :: port_list' ->
-    let s = CodegenPort.instanformat port in 
-    Printf.sprintf ".%s (%s)," s s |> CodegenPrinter.print_line printer;
-    print_port_list port_list'
+  let connections =
+    [
+      ".clk_i(clk_i)";
+      ".rst_ni(rst_ni)";
+    ] @ List.map (fun port ->
+      let s = CodegenPort.instanformat port in
+      Printf.sprintf ".%s (%s)" s s
+    ) port_list
   in
-  print_port_list port_list;
-  port_list
+  let rec print_connections connections =
+  match connections with
+  | [] -> ()
+  | [connection] ->
+      CodegenPrinter.print_line printer connection
+  | connection :: rest ->
+      CodegenPrinter.print_line printer (connection ^ ",");
+      print_connections rest
+  in
+  print_connections connections
 
 let verification_codegen_proc printer (graphs : EventGraph.event_graph_collection) (g : proc_graph) =
   let rec find_endpoint_message count endpoints =
@@ -86,7 +90,9 @@ let verification_codegen_proc printer (graphs : EventGraph.event_graph_collectio
   (* Print Top Module *)
   (* Print the input, output ports *)
   let name_assert = ExternName.user_sv() ^ "_assert" in
-  Printf.sprintf "module %s (\n);" name_assert |> CodegenPrinter.print_line printer ~lvl_delta_post:1;
+  Printf.sprintf "module %s (" name_assert
+  |> CodegenPrinter.print_line printer ~lvl_delta_post:1;
+  CodegenPrinter.print_line printer ");";
 
   (* Print the clock and reset declaration *)
   Printf.sprintf "logic clk_i = 0;" |> CodegenPrinter.print_line printer;
@@ -131,14 +137,15 @@ let verification_codegen_proc printer (graphs : EventGraph.event_graph_collectio
 
     (* Print the input, output ports *)
     let name_assert = ExternName.user_sv() ^ "_assert_" ^ string_of_int count in
-    Printf.sprintf "module %s \n(" name_assert |> CodegenPrinter.print_line printer ~lvl_delta_post:1;
+    Printf.sprintf "module %s" name_assert |> CodegenPrinter.print_line printer;
+    CodegenPrinter.print_line printer "(" ~lvl_delta_post:1;
 
     (* Print the clock and reset declaration *)
     Printf.sprintf "input logic clk_i," |> CodegenPrinter.print_line printer;
     Printf.sprintf "input logic rst_ni" |> CodegenPrinter.print_line printer;
     (* Printf.sprintf "Number of endpoints: %d\n" (List.length g.messages.args) |> CodegenPrinter.print_line printer; *)
 
-    Printf.sprintf ");\n" |> CodegenPrinter.print_line printer;
+    CodegenPrinter.print_line printer ");";
     (* Check the lifetime contract *)
     let number_of_lifetime_cycles (d : Lang.delay_pat_chan_local) : int option =
       match d with
@@ -175,6 +182,9 @@ let verification_codegen_proc printer (graphs : EventGraph.event_graph_collectio
       | _ -> failwith (Printf.sprintf "Cannot emit timing contracts for endpoint %s: timing contracts are unsupported for this combination" ep.name)
     in
 
+    (* Print Reset Synchronous Signal *)
+    Printf.sprintf "logic rst_assert_ni;" |> CodegenPrinter.print_line printer;
+
     (* Print declaration of the FSM states *)
     let print_declaration_FSM count (ep : Lang.endpoint_def) =
       let cc = MessageCollection.lookup_channel_class graphs.channel_classes ep.channel_class |> Option.get in
@@ -207,16 +217,8 @@ let verification_codegen_proc printer (graphs : EventGraph.event_graph_collectio
     let _ = verification_codegen_instantiations printer graphs g.messages.args in
     CodegenPrinter.print_line printer ~lvl_delta_pre:(-1) ~lvl_delta_post:1 ");";
 
-    let valid_name =
-      match CodegenPort.valid_port_names graphs.channel_classes ep local_idx with
-      | Some s -> s
-      | None -> failwith "Expected valid signal for this message, but none exists"
-    in
-    let ack_name =
-      match CodegenPort.ack_port_names graphs.channel_classes ep local_idx with
-      | Some s -> s
-      | None -> failwith "Expected ack signal for this message, but none exists"
-    in
+    let valid_name_opt = CodegenPort.valid_port_names graphs.channel_classes ep local_idx in
+    let ack_name_opt = CodegenPort.ack_port_names graphs.channel_classes ep local_idx in
     let data_names = CodegenPort.data_port_names graphs.channel_classes ep local_idx in
     let datas =
       match data_names with
@@ -224,6 +226,24 @@ let verification_codegen_proc printer (graphs : EventGraph.event_graph_collectio
       | [d] -> d
       | _ -> failwith "Verification assertions currently support only one non-unit data signal per message"
     in
+
+    let ff_rst_block : string = 
+      String.concat "\n" [
+        Printf.sprintf "always_ff @(posedge clk_i or negedge rst_ni) begin";
+        Printf.sprintf "  if (!rst_ni)";
+        Printf.sprintf "    rst_assert_ni <= 1'b0;";
+        Printf.sprintf "  else";
+        Printf.sprintf "    rst_assert_ni <= 1'b1;";
+        Printf.sprintf "end";
+      ]
+    in
+    
+    let block = ff_rst_block in
+      block
+      |> String.split_on_char '\n'
+      |> List.iter (fun line ->
+          CodegenPrinter.print_line printer line ~lvl_delta_post:0
+      );
 
     (* Fixed FSM always_ff block *)
     let ff_block (state1 : string) (state2 : string): string =
@@ -334,13 +354,26 @@ let verification_codegen_proc printer (graphs : EventGraph.event_graph_collectio
       Printf.sprintf "end";
     ]
     in
+
+    let require_valid () =
+      match valid_name_opt with
+      | Some s -> s
+      | None -> failwith (Printf.sprintf "Expected valid signal for endpoint %s message %d, but none exists" ep.name local_idx)
+    in
+    let require_ack () =
+      match ack_name_opt with
+      | Some s -> s
+      | None -> failwith (Printf.sprintf "Expected ack signal for endpoint %s message %d, but none exists" ep.name local_idx)
+    in
   
     (* match the synchronisation and direction to print the correct fsm and assertion properties *)
-    let match_fsm_assertion (msg : message_def) (d : Lang.endpoint_direction) (valid_name : string) (ack_name : string) (data : string): string =
+    let match_fsm_assertion (msg : message_def) (d : Lang.endpoint_direction) (data : string): string =
       match (msg.send_sync, msg.recv_sync) with
       | (Dynamic, Dynamic) -> 
         (match d with
         | Left  -> 
+          let valid_name = require_valid () in
+          let ack_name = require_ack () in
           let block = ff_block "WAIT_REQ" "DROP_VALID" in
           block
           |> String.split_on_char '\n'
@@ -368,6 +401,8 @@ let verification_codegen_proc printer (graphs : EventGraph.event_graph_collectio
             Printf.sprintf "else $error(\"Assertion Failed: wait_req_ack_low\");\n";
           ]
         | Right -> 
+          let valid_name = require_valid () in
+          let ack_name = require_ack () in
           let block = ff_block "WAIT_ACK" "DROP_VALID" in
           block
           |> String.split_on_char '\n'
@@ -391,6 +426,7 @@ let verification_codegen_proc printer (graphs : EventGraph.event_graph_collectio
       | (_, Dynamic) -> 
         (match d with 
         | Left ->
+          let ack_name = require_ack () in
           let block = ff_block "WAIT_ACK" "DROP_ACK" in
           block
           |> String.split_on_char '\n'
@@ -410,6 +446,7 @@ let verification_codegen_proc printer (graphs : EventGraph.event_graph_collectio
             Printf.sprintf "else $error(\"Assertion Failed: data_stable_N_cycles\");\n";
           ]
         | Right -> 
+          let ack_name = require_ack () in
           let block = ff_block "WAIT_ACK" "DROP_ACK" in
           block
           |> String.split_on_char '\n'
@@ -433,6 +470,7 @@ let verification_codegen_proc printer (graphs : EventGraph.event_graph_collectio
       | (Dynamic, _) -> 
         (match d with
         | Left ->
+          let valid_name = require_valid () in
           let block = ff_block "WAIT_REQ" "DROP_VALID" in
           block
           |> String.split_on_char '\n'
@@ -454,6 +492,7 @@ let verification_codegen_proc printer (graphs : EventGraph.event_graph_collectio
             Printf.sprintf "else $error(\"Assertion Failed: valid_low_during_DROP_VALID\");\n";
           ]
         | Right -> 
+          let valid_name = require_valid () in
           let block = ff_block "WAIT_REQ" "DROP_VALID" in
           block
           |> String.split_on_char '\n'
@@ -481,7 +520,11 @@ let verification_codegen_proc printer (graphs : EventGraph.event_graph_collectio
       if count < List.length cc.messages then
         let msg_def = List.nth cc.messages count in
         let msg_def = ParamConcretise.concretise_message cc.params ep.channel_params msg_def in
-          CodegenPrinter.print_line printer (match_fsm_assertion msg_def ep.dir valid_name ack_name datas)
+          let assertion_block = match_fsm_assertion msg_def ep.dir datas in
+          assertion_block
+          |> String.split_on_char '\n'
+          |> List.iter (fun line ->
+            CodegenPrinter.print_line printer line ~lvl_delta_post:0)
       else ()
     in 
     print_fsm_assertion local_idx ep;

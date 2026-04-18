@@ -1,0 +1,28 @@
+Value =   0
+Value =   1
+Value =   2
+Value =   3
+Value =   4
+Value =   5
+Value =   6
+Value =   7
+Value =   8
+Value =   9
+Value =  10
+Value =  11
+Value =  12
+Value =  13
+Value =  14
+Value =  15
+Value =  16
+Value =  17
+Value =  18
+Value =  19
+Value =  20
+Value =  21
+Value =  22
+Value =  23
+- extern_example6_sender_assert.sv:15: Verilog $finish
+- S i m u l a t i o n   R e p o r t: Verilator 5.024 2024-04-05
+- Verilator: $finish at 515ps; walltime 0.001 s; speed 0.000 s/s
+- Verilator: cpu 0.000 s on 1 threads; alloced 57 MB

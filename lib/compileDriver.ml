@@ -224,34 +224,17 @@ let verification_compile out config =
        {graphs with EventGraph.external_event_graphs = all_event_graphs}) all_collections
   end
 
-
 let verification_run (config : Config.compile_config) : unit =
   let open Config in
   match List.rev config.input_filenames with
   | anvil_file :: user_sv_file :: _ ->
-    ExternName.generate user_sv_file;
-    let c = { config with
-      input_filenames = [anvil_file];
-      output_filename = None;
-    } in
-    (try verification_compile stdout c
-    with
-    | CompileError msg ->
-      let open Except in
-      Printf.eprintf "Verification compilation failed!\n";
-      List.iter (
-        function
-        | Text msg_text -> Printf.eprintf "%s\n" msg_text
-        | Codespan (file_name, span) ->
-          let line = span.st.pos_lnum in
-          let col = span.st.pos_cnum - span.st.pos_bol in
-          match file_name with
-          | Some file_name ->
-              Printf.eprintf "%s:%d:%d:\n" file_name line col
-          | None ->
-              Printf.eprintf "<unknown>:%d:%d:\n" line col
-      ) msg;
-      exit 1)
+      ExternName.generate user_sv_file;
+      let c = {
+        config with
+        input_filenames = [anvil_file];
+        output_filename = None;
+      } in
+      verification_compile stdout c
   | _ ->
-    Printf.eprintf "Error: -sv-extern requires two input files: <anvil-file> <user-sv-file>\n";
-    exit 1
+      raise_compile_error None
+        [Except.Text "Error: -sv-extern requires two input files: <anvil-file> <user-sv-file>"]

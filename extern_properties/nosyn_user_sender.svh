@@ -1,6 +1,6 @@
 
 property data_stable_valid_high (valid, current_state, data);
-    @(posedge clk_i) ((valid && !$rose(valid)) && (current_state inside {WAIT_REQ, WAIT_ACK})) |-> data == $past(data);
+    @(posedge clk_i) disable iff (!rst_assert_ni) ((valid && !$rose(valid)) && (current_state inside {WAIT_REQ, WAIT_ACK})) |-> data == $past(data);
 endproperty 
 
 property valid_high_until_ack_high (valid, current_state, ack);
