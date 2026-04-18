@@ -1,0 +1,68 @@
+Data Received:00000000 || Valid=0 || Ack=0
+Data Received:00000000 || Valid=0 || Ack=0
+Data Received:00000001 || Valid=1 || Ack=0
+Data Send =   1
+Data Received:00000001 || Valid=1 || Ack=1
+Data Received:00000001 || Valid=0 || Ack=1
+Data Received:00000001 || Valid=0 || Ack=0
+Data Received:00000010 || Valid=1 || Ack=0
+Data Send =   2
+Data Received:00000010 || Valid=1 || Ack=1
+Data Received:00000010 || Valid=0 || Ack=1
+Data Received:00000010 || Valid=0 || Ack=0
+Data Received:00000011 || Valid=1 || Ack=0
+Data Send =   3
+Data Received:00000011 || Valid=1 || Ack=1
+Data Received:00000011 || Valid=0 || Ack=1
+Data Received:00000011 || Valid=0 || Ack=0
+Data Received:00000100 || Valid=1 || Ack=0
+Data Send =   4
+Data Received:00000100 || Valid=1 || Ack=1
+Data Received:00000100 || Valid=0 || Ack=1
+Data Received:00000100 || Valid=0 || Ack=0
+Data Received:00000101 || Valid=1 || Ack=0
+Data Send =   5
+Data Received:00000101 || Valid=1 || Ack=1
+Data Received:00000101 || Valid=0 || Ack=1
+Data Received:00000101 || Valid=0 || Ack=0
+Data Received:00000110 || Valid=1 || Ack=0
+Data Send =   6
+Data Received:00000110 || Valid=1 || Ack=1
+Data Received:00000110 || Valid=0 || Ack=1
+Data Received:00000110 || Valid=0 || Ack=0
+Data Received:00000111 || Valid=1 || Ack=0
+Data Send =   7
+Data Received:00000111 || Valid=1 || Ack=1
+Data Received:00000111 || Valid=0 || Ack=1
+Data Received:00000111 || Valid=0 || Ack=0
+Data Received:00001000 || Valid=1 || Ack=0
+Data Send =   8
+Data Received:00001000 || Valid=1 || Ack=1
+Data Received:00001000 || Valid=0 || Ack=1
+Data Received:00001000 || Valid=0 || Ack=0
+Data Received:00001001 || Valid=1 || Ack=0
+Data Send =   9
+Data Received:00001001 || Valid=1 || Ack=1
+Data Received:00001001 || Valid=0 || Ack=1
+Data Received:00001001 || Valid=0 || Ack=0
+Data Received:00001010 || Valid=1 || Ack=0
+Data Send =  10
+Data Received:00001010 || Valid=1 || Ack=1
+Data Received:00001010 || Valid=0 || Ack=1
+Data Received:00001010 || Valid=0 || Ack=0
+Data Received:00001011 || Valid=1 || Ack=0
+Data Send =  11
+Data Received:00001011 || Valid=1 || Ack=1
+Data Received:00001011 || Valid=0 || Ack=1
+Data Received:00001011 || Valid=0 || Ack=0
+Data Received:00001100 || Valid=1 || Ack=0
+Data Send =  12
+Data Received:00001100 || Valid=1 || Ack=1
+Data Received:00001100 || Valid=0 || Ack=1
+Data Received:00001100 || Valid=0 || Ack=0
+Data Received:00001101 || Valid=1 || Ack=0
+Data Send =  13
+- extern_example1_receiver_assert.sv:15: Verilog $finish
+- S i m u l a t i o n   R e p o r t: Verilator 5.024 2024-04-05
+- Verilator: $finish at 515ps; walltime 0.001 s; speed 0.000 s/s
+- Verilator: cpu 0.000 s on 1 threads; alloced 57 MB

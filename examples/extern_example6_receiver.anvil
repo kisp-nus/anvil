@@ -1,0 +1,12 @@
+chan ch {
+    left req : (logic[8]@#1) @dyn - @#2
+}
+
+proc extern_example6_receiver (endp : left ch) {
+    loop {
+        cycle 2 >>
+        let r = recv endp.req >>
+        dprint "Value = %d" (r)
+    }
+}
+

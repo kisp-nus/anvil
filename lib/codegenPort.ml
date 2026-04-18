@@ -51,3 +51,51 @@ let format (typedefs : TypedefMap.t) (macro_defs: macro_def list) port =
     | Inp -> "input"
     | Out -> "output"
   in if port.dtype <> Lang.unit_dtype then Printf.sprintf "%s %s %s" inout (CodegenFormat.format_dtype typedefs macro_defs port.dtype) ep_name_formatted else ""
+
+let assertformat (typedefs : TypedefMap.t) (macro_defs: macro_def list) port =
+  Printf.sprintf "%s %s" (CodegenFormat.format_dtype typedefs macro_defs port.dtype) port.name
+
+let instanformat port =
+  Printf.sprintf "%s" port.name
+
+let valid_port_names (channel_classes : channel_class_def list) (ep : Lang.endpoint_def) local_idx : string option =
+  let cc =
+    MessageCollection.lookup_channel_class channel_classes ep.channel_class
+    |> Option.get
+  in
+  let msg_def = List.nth cc.messages local_idx in
+  let msg_def = ParamConcretise.concretise_message cc.params ep.channel_params msg_def in
+  if message_has_valid_port msg_def then
+    Some (CodegenFormat.format_msg_valid_signal_name ep.name msg_def.name)
+  else
+    None
+
+let ack_port_names (channel_classes : channel_class_def list) (ep : Lang.endpoint_def) local_idx : string option =
+  let cc =
+    MessageCollection.lookup_channel_class channel_classes ep.channel_class
+    |> Option.get
+  in
+  let msg_def = List.nth cc.messages local_idx in
+  let msg_def = ParamConcretise.concretise_message cc.params ep.channel_params msg_def in
+  if message_has_ack_port msg_def then
+    Some (CodegenFormat.format_msg_ack_signal_name ep.name msg_def.name)
+  else
+    None
+
+let data_port_names (channel_classes : channel_class_def list) (ep : Lang.endpoint_def) local_idx =
+  let cc =
+    MessageCollection.lookup_channel_class channel_classes ep.channel_class
+    |> Option.get
+  in
+  let msg_def = List.nth cc.messages local_idx in
+  let msg_def = ParamConcretise.concretise_message cc.params ep.channel_params msg_def in
+  let (_, names_rev) =
+    List.fold_left (fun (n, acc) (stype : sig_type_chan_local) ->
+      if stype.dtype = Lang.unit_dtype then
+        (n, acc)
+      else
+        (n + 1,
+         CodegenFormat.format_msg_data_signal_name ep.name msg_def.name n :: acc)
+    ) (0, []) msg_def.sig_types
+  in
+  List.rev names_rev

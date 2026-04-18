@@ -9,6 +9,7 @@ type compile_config = {
   two_round_graph: bool;
   json_output: bool;
   input_filenames: string list;
+  sv_extern_mode: string;
 }
 
 let parse_args () : compile_config =
@@ -21,7 +22,8 @@ let parse_args () : compile_config =
   and json_output = ref false
   and input_filenames = ref []
   and output_filename = ref None
-  and just_check = ref false in
+  and just_check = ref false
+  and sv_extern_mode = ref "" in
 
   let add_input_filename s =
     input_filenames := s::!input_filenames
@@ -36,10 +38,11 @@ let parse_args () : compile_config =
       ("-o", Arg.String (fun s -> output_filename := Some s), "Set output filename");
       ("-just-check", Arg.Set just_check, "Only typecheck and validate the input files");
       ("-two-round", Arg.Set two_round_graph, "Enable codegen of logic for two rounds");
-      ("-json", Arg.Set json_output, "Output compilation results in JSON format")
+      ("-json", Arg.Set json_output, "Output compilation results in JSON format");
+      ("-sv-extern", Arg.Set_string sv_extern_mode, "SV extern mode: extern")
     ]
     add_input_filename
-    "anvil [-stdin] [-verbose] [-disable-lt-checks] [-O <opt-level>] [-two-round] [-json] [-strict-dtc] <file1> [<file2>] ...";
+    "anvil [-stdin] [-verbose] [-disable-lt-checks] [-O <opt-level>] [-two-round] [-json] [-strict-dtc] [-sv-extern extern] <file1> [<file2>] ...";
   {
     verbose = !verbose;
     stdin = !stdin;
@@ -51,6 +54,7 @@ let parse_args () : compile_config =
     input_filenames = !input_filenames;
     output_filename = !output_filename;
     just_check = !just_check;
+    sv_extern_mode = !sv_extern_mode;
   }
 
 

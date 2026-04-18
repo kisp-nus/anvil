@@ -1,0 +1,36 @@
+Receiver got data = 1
+Data Send =   1
+Receiver got data = 2
+Data Send =   2
+Receiver got data = 3
+Data Send =   3
+Receiver got data = 4
+Data Send =   4
+Receiver got data = 5
+Data Send =   5
+Receiver got data = 6
+Data Send =   6
+Receiver got data = 7
+Data Send =   7
+Receiver got data = 8
+Data Send =   8
+Receiver got data = 9
+Data Send =   9
+Receiver got data = 10
+Data Send =  10
+Receiver got data = 11
+Data Send =  11
+Receiver got data = 12
+Data Send =  12
+Receiver got data = 13
+Data Send =  13
+Receiver got data = 14
+Data Send =  14
+Receiver got data = 15
+Data Send =  15
+Receiver got data = 16
+Data Send =  16
+- extern_example3_receiver_assert.sv:15: Verilog $finish
+- S i m u l a t i o n   R e p o r t: Verilator 5.024 2024-04-05
+- Verilator: $finish at 515ps; walltime 0.001 s; speed 0.000 s/s
+- Verilator: cpu 0.000 s on 1 threads; alloced 57 MB
