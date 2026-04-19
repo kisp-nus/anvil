@@ -7,6 +7,13 @@ type code_span = {
   ed : Lexing.position; (** end of the span *)
 }
 
+(** A span of the original definition of a segment of code. *)
+type def_span = {
+  st : Lexing.position; (** start of the span *)
+  ed : Lexing.position; (** end of the span *)
+  cunit : string option; (** the cunit filename in which the definition is located; if omitted, implies self *)
+}
+
 (** A dummy code span that does not represent any valid span. *)
 let code_span_dummy = { st = Lexing.dummy_pos; ed = Lexing.dummy_pos }
 
@@ -14,16 +21,26 @@ type 'a maybe_param = 'a ParamEnv.maybe_param
 
 type identifier = string
 
+type exec_delay_term =
+  | DelayConst of int
+  | DelaySym of string
+
+type exec_delay = exec_delay_term list
+
 (** A node in AST. Containing the data plus the code span info. *)
 type 'a ast_node = {
   span : code_span;
+  mutable def_span : def_span list; (* the definitions associated with this node (if applicable) *)
+  mutable action_event : (int * int * int option * exec_delay) option;
+    (** opt (thread id, event id, sustained-till-event id, delay_to_exec) *)
+    (* if applicable, denotes the event where this action is executed in, within the node's process *)
   d : 'a;
 }
 
 (** Construct an AST node with specified data and span. *)
-let ast_node_of_data st ed d = { span = {st; ed}; d }
-let tag_with_span s d = { span = s; d }
-let dummy_ast_node_of_data d = { span = code_span_dummy; d }
+let ast_node_of_data st ed d = { span = {st; ed}; def_span = []; action_event = None; d }
+let tag_with_span s d = { span = s; def_span = []; action_event = None; d }
+let dummy_ast_node_of_data d = { span = code_span_dummy; def_span = []; action_event = None; d }
 
 let data_of_ast_node n = n.d
 
@@ -36,6 +53,7 @@ type param_type =
 type param = {
   param_name : identifier;
   param_ty : param_type;
+  span : code_span;
 }
 
 (** This identifies a message type within the context of a process.
@@ -172,8 +190,8 @@ let dtype_of_literal (lit : literal) =
 type data_type = [
   | `Logic
   | `Array of data_type * int maybe_param
-  | `Variant of (data_type option)*(identifier * (data_type option)*(literal option)) list (** ADT sum type *)
-  | `Record of (identifier * data_type) list (** ADT product type *)
+  | `Variant of (data_type option) * ((identifier * (data_type option) * (literal option)) ast_node list) (** ADT sum type *)
+  | `Record of (identifier * data_type) ast_node list (** ADT product type *)
   | `Tuple of data_type list
   | `Opaque of identifier (** type reserved for internal purposes *)
   | `Named of identifier * param_value list (** named type which can be concretised
@@ -215,7 +233,8 @@ type endpoint_def = {
   used within this process? *)
   opp: identifier option; (** if the endpoint is created locally, the other endpoint associated
   with the same channel *)
-  num_instances : array_dimensions option (** number of instances for arrayed channels *)
+  num_instances : array_dimensions option; (** number of instances for arrayed channels *)
+  span: code_span;
 }
 
 (** A macro definition. *)
@@ -223,6 +242,8 @@ type endpoint_def = {
 type macro_def = {
   id: identifier;
   value : int;
+  span: code_span;
+  mutable cunit_file_name: string option;
 }
 
 (** A type definition ([type name = body])*)
@@ -230,28 +251,31 @@ and type_def = {
   name: identifier;
   body: data_type;
   params: param list; (** list of parameters *)
+  span: code_span;
+  mutable cunit_file_name: string option;
 }
 
 (** Unit type. Basically an empty tuple. *)
 let unit_dtype = `Tuple []
 
 (** Number of bits required to hold the tag for a variant type. *)
-let variant_tag_size (v: [>`Variant of (data_type option)*((identifier * (data_type option)*(literal option)) list)]) : int =
+let variant_tag_size (v: [>`Variant of (data_type option)*((identifier * (data_type option)*(literal option)) ast_node list)]) : int =
   match v with
   | `Variant (_, vlist) -> List.length vlist |> Utils.int_log2
 
 (** Data type a variant type constructor. *)
-let variant_lookup_dtype (v: [> `Variant of (data_type option)*((identifier * (data_type option) * (literal option)) list)]) (cstr: identifier) : data_type option =
+let variant_lookup_dtype (v: [> `Variant of (data_type option)*((identifier * (data_type option) * (literal option)) ast_node list)]) (cstr: identifier) : data_type option =
     match v with
     | `Variant (_, vlist) ->
-      List.find_opt (fun (x,_dt,_vl) -> x = cstr) vlist |> Option.map (fun (_,dt,_) -> dt) |> Option.join
+      List.find_opt (fun n -> let (x,_dt,_vl) = n.d in x = cstr) vlist |> Option.map (fun n -> let (_,dt,_) = n.d in dt) |> Option.join
 
 (** Index of a variant type constructor. *)
-let variant_lookup_index (v: [> `Variant of (data_type option)*((identifier * (data_type option) * (literal option)) list)]) (cstr: identifier) : int option =
+let variant_lookup_index (v: [> `Variant of (data_type option)*((identifier * (data_type option) * (literal option)) ast_node list)]) (cstr: identifier) : int option =
   let res : int option ref = ref None in
   match v with
   | `Variant (_,vlist) ->
-      List.iteri (fun i (x,_,v) ->
+      List.iteri (fun i n -> 
+        let (x,_,v) = n.d in
         if Option.is_none !res then begin
           if x = cstr then
             if Option.is_none v then
@@ -315,6 +339,7 @@ type message_def = {
   recv_sync: message_sync_mode; (** how to synchronise when data is acknowledged *)
   sig_types: sig_type_chan_local list; (** the signal types of the values carried in the message *)
   span: code_span; (** code span of the message definition *)
+  mutable cunit_file_name: string option; (** the file in which the message type is defined (for reference, optional) *)
 }
 
 (** A channel class definition, containing a list of message type definitions. *)
@@ -323,6 +348,7 @@ type channel_class_def = {
   messages: message_def list;
   params: param list;  (** List of generic parameters *)
   span: code_span; (** code span of the channel class definition *)
+  mutable cunit_file_name: string option; (** the file in which the channel class is defined (for reference, optional) *)
 }
 
 (** The visibility of a channel. *)
@@ -393,7 +419,7 @@ and recv_pack = {
 }
 and constructor_spec = {
   variant_ty_name: identifier;
-  variant: identifier;
+  variant: identifier ast_node;
 }
 (** A message type. This is a pair of the message type name and the direction. *)
 
@@ -416,9 +442,9 @@ and expr =
   | TryRecv of identifier * recv_pack * expr_node * expr_node (** try recv *)
   | TrySend of send_pack * expr_node * expr_node (** try send *)
   | Construct of constructor_spec * expr_node option (** construct a variant type value with a constructor *)
-  | Record of identifier * (identifier * expr_node) list * expr_node option (** constructing a record-type value *)
+  | Record of identifier * (identifier * expr_node) ast_node list * expr_node option (** constructing a record-type value *)
   | Index of expr_node * index (** an element of an array ([a[3]]) *)
-  | Indirect of expr_node * identifier (** a member of a record ([a.b]) *)
+  | Indirect of expr_node * identifier ast_node (** a member of a record ([a.b]) *)
   | Concat of expr_node list * bool
   | Cast of expr_node * data_type (** cast an expression to a specific data type *)
   | Ready of message_specifier (** [ready(a, b)] *)
@@ -437,7 +463,7 @@ and expr_node = expr ast_node
 and lvalue =
   | Reg of identifier (** a register *)
   | Indexed of lvalue * index (** lvalue[index] *)
-  | Indirected of lvalue * identifier (** lvalue.field *)
+  | Indirected of lvalue * identifier ast_node (** lvalue.field *)
 
 (** Indexing, either a single point or a range. *)
 and index =
@@ -510,23 +536,29 @@ type proc_def = {
   args: endpoint_def ast_node list; (** endpoints passed from outside *)
   body: proc_def_body_maybe_extern; (** process body *)
   params: param list; (** compile-time parameters *)
+  span: code_span; (** code span of the process body *)
+  mutable cunit_file_name: string option; (** the file in which the process is defined (for reference, optional) *)
 }
 
 (** An import directive for importing code from other files. *)
 type import_directive = {
-  file_name : string;
+  file_name : string; (** the file to import from *)
   is_extern : bool; (** is this import external?
       Currently an external import means importing SystemVerilog code *)
+  span: code_span; (** code span of the import directive *)
 }
 type typed_arg = {
   arg_name: identifier;
   arg_type: data_type option; (** type of the argument, if any *)
+  span: code_span;
 }
 
 type func_def =  {
   name: identifier;
   args: typed_arg list;
   body: expr_node;
+  span: code_span;
+  mutable cunit_file_name: string option; (** the file in which the function is defined (for reference, optional) *)
 }
 (** A channel class definition, which is a set of message types. *)
 
@@ -590,7 +622,7 @@ and string_of_lvalue (lv : lvalue) : string =
   match lv with
   | Reg id -> "Reg " ^ id
   | Indexed (lv, idx) -> "Indexed (" ^ string_of_lvalue lv ^ ", " ^ string_of_index idx ^ ")"
-  | Indirected (lv, id) -> "Indirected (" ^ string_of_lvalue lv ^ ", " ^ id ^ ")"
+  | Indirected (lv, id) -> "Indirected (" ^ string_of_lvalue lv ^ ", " ^ id.d ^ ")"
 
 and string_of_index (idx : index) : string =
   match idx with
@@ -607,14 +639,16 @@ and string_of_data_type (dtype : data_type) : string =
     in
     "Array[" ^ n' ^ "] (" ^ string_of_data_type d ^ ")"
   | `Variant (_, (id_opt_list)) ->
-      "Variant (" ^ String.concat ", " (List.map (fun (id, dt_opt, val_opt) ->
+      "Variant (" ^ String.concat ", " (List.map (fun node ->
+        let (id, dt_opt, val_opt) = node.d in
         match (dt_opt, val_opt) with
         | (Some dt, None) -> id ^ ": " ^ string_of_data_type dt
         | (None, Some lit) -> id ^ ": " ^ string_of_literal lit
         | (Some dt, Some lit) -> id ^ ": " ^ string_of_data_type dt ^ " = " ^ string_of_literal lit
         | (None, None) -> id) id_opt_list) ^ ")"
   | `Record fields ->
-      "Record (" ^ String.concat ", " (List.map (fun (field_name, field_type) ->
+      "Record (" ^ String.concat ", " (List.map (fun node ->
+        let field_name, field_type = node.d in
         field_name ^ ": " ^ string_of_data_type field_type) fields) ^ ")"
   | `Tuple dt_list ->
     (
@@ -670,8 +704,9 @@ let rec substitute_expr_identifier (id: identifier) (value: expr_node) (idx : in
   | Record (name, fields, base) ->
       Record (
         name,
-        List.map (fun (field_name, field_expr) ->
-          (field_name, subst field_expr)
+        List.map (fun n ->
+          let (field_name, field_expr) = n.d in
+          { n with d = (field_name, subst field_expr) }
         ) fields,
         Option.map subst base
       )

@@ -8,6 +8,11 @@ let of_list typedef_list =
   List.to_seq typedef_list |> Seq.map (fun (x : type_def) -> (x.name, x))
     |> Utils.StringMap.of_seq
 
+let type_def_name_resolve (type_defs : t) (dtype : data_type) : type_def option =
+  match dtype with
+  | `Named (type_name, _) -> Utils.StringMap.find_opt type_name type_defs
+  | _ -> None
+
 let data_type_name_resolve (type_defs : t) (dtype : data_type) : data_type option =
   match dtype with
   | `Named (type_name, params) -> Utils.StringMap.find_opt type_name type_defs |> Option.map (fun (x : type_def) ->
@@ -36,7 +41,8 @@ let rec data_type_size (type_defs : t) (macro_defs : macro_def list) (dtype : da
       in
       ParamConcretise.concretise_dtype type_def.params params type_def.body |> data_type_size type_defs macro_defs
   | `Variant (dt,vlist) as var ->
-      let mx_data_size = List.fold_left (fun m (_,dt,_) -> max m (
+      let mx_data_size = List.fold_left (fun m n -> max m (
+        let (_, dt, _) = n.d in
         let inner_dtype_op = dt in
         match inner_dtype_op with
         | None -> 0
@@ -44,7 +50,7 @@ let rec data_type_size (type_defs : t) (macro_defs : macro_def list) (dtype : da
       )) 0 vlist
       and tag_size = variant_tag_size var in
       let total_size = mx_data_size + tag_size in
-      let ctor_names = List.map (fun (id,_,_) -> id) vlist |> String.concat ", " in
+      let ctor_names = List.map (fun n -> let (id,_,_) = n.d in id) vlist |> String.concat ", " in
       if Option.is_some dt then
         let dt_concrete = Option.get dt in
         let dt_size = data_type_size type_defs macro_defs dt_concrete in
@@ -54,7 +60,7 @@ let rec data_type_size (type_defs : t) (macro_defs : macro_def list) (dtype : da
       else
         total_size
   | `Record flist ->
-      List.fold_left (fun m n -> m + (snd n |> data_type_size type_defs macro_defs)) 0 flist
+      List.fold_left (fun m n -> m + (snd n.d |> data_type_size type_defs macro_defs)) 0 flist
   | `Tuple comp_dtype_list ->
       List.fold_left (fun m n -> m + (data_type_size type_defs macro_defs n)) 0 comp_dtype_list
   | `Opaque _ -> raise (TypeError [Text "Opaque data type is unsized!"])
@@ -68,7 +74,8 @@ let data_type_indirect (type_defs : t) (macro_defs: macro_def list) (dtype : dat
       (* find the field by fieldname *)
       let found : data_type option ref = ref None
       and offset = ref 0 in
-      let lookup = fun ((field, field_type) : identifier * data_type) ->
+      let lookup = fun (node : (identifier * data_type) ast_node) ->
+        let (field, field_type) = node.d in
         if Option.is_none !found then begin
           if field = fieldname then
             found := Some field_type

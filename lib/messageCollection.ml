@@ -80,10 +80,10 @@ let create (channels : channel_def ast_node list)
     (* To fix: spawn channel instances *)
     if chan.n_instances = None then
       let left_endpoint = { name = chan.endpoint_left; channel_class = chan.channel_class;
-                          channel_params = chan.channel_params;
+                          channel_params = chan.channel_params; span = span;
                           dir = Left; foreign = get_foreign chan.endpoint_left; opp = Some chan.endpoint_right; num_instances = None } in
       let right_endpoint = { name = chan.endpoint_right; channel_class = chan.channel_class;
-                          channel_params = chan.channel_params;
+                          channel_params = chan.channel_params; span = span;
                           dir = Right; foreign = get_foreign chan.endpoint_right; opp = Some chan.endpoint_left; num_instances = None  } in
       [(left_endpoint, span); (right_endpoint, span)]
     else 
@@ -95,10 +95,10 @@ let create (channels : channel_def ast_node list)
       
       let endpoints = List.map2 (fun lft_nm  rght_nm ->
         let left_endpoint = { name = lft_nm; channel_class = chan.channel_class;
-                            channel_params = chan.channel_params;
+                            channel_params = chan.channel_params; span = span;
                             dir = Left; foreign = get_foreign chan.endpoint_left; opp = Some rght_nm; num_instances = Some n' } in
         let right_endpoint = { name = rght_nm; channel_class = chan.channel_class;
-                            channel_params  = chan.channel_params;  
+                            channel_params  = chan.channel_params; span = span;
                             dir = Right; foreign = get_foreign chan.endpoint_right; opp = Some lft_nm; num_instances = Some n' } in
         [(left_endpoint, span); (right_endpoint, span)]
         ) left_nm_list right_nm_list |> List.concat in 
@@ -124,7 +124,7 @@ let create (channels : channel_def ast_node list)
   (* override the user-specified foreign in args *)
   (* if its array of channels create ep instances appended with ep[i] for the messages *)
 
-  let processed_args = List.concat_map (fun ({d = ep; span} : endpoint_def ast_node) ->
+  let processed_args = List.concat_map (fun ({d = ep; def_span = _; action_event = _; span} : endpoint_def ast_node) ->
     match ep.num_instances with
     | None ->
         [({ep with foreign = get_foreign ep.name}, span)]

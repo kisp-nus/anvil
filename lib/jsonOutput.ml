@@ -27,10 +27,11 @@ type json_output = {
   success: bool;
   errors: json_error list;
   output: string option;
+  ast: Yojson.Safe.t option;
 }
 
 (** Convert error message to JSON errors *)
-let error_message_to_json_errors (error_type : string) (msg : Except.error_message) =
+let error_message_to_json_error (error_type : string) (msg : Except.error_message) =
   let open Except in
   let description =
     List.map (function
@@ -59,11 +60,11 @@ let error_message_to_json_errors (error_type : string) (msg : Except.error_messa
     | None -> None
     | Some (path, _) -> path
   in
-  [{ error_type; path; description }]
+  { error_type; path; description }
 
 
 
-module Y = Yojson.Basic
+module Y = Yojson.Safe
 
 let json_position_to_yojson (p : json_position) =
   `Assoc [
@@ -87,6 +88,7 @@ let json_fragment_to_yojson (f : json_fragment) =
   | None -> `Assoc base
   | Some tr -> `Assoc (base @ [ ("trace", json_trace_to_yojson tr) ])
 
+
 let json_error_to_yojson (err : json_error) =
   `Assoc [
     ("type", `String err.error_type);
@@ -98,16 +100,27 @@ let json_output_to_yojson (json_out : json_output) =
   `Assoc [
     ("success", `Bool json_out.success);
     ("errors", `List (List.map json_error_to_yojson json_out.errors));
-    ("output", match json_out.output with None -> `Null | Some s -> `String s)
+    ("output", match json_out.output with None -> `Null | Some s -> `String s);
+    ("ast", match json_out.ast with None -> `Null | Some a -> a)
   ]
 
 let json_output_to_string (json_out : json_output) : string =
   Y.to_string (json_output_to_yojson json_out)
 
-(** Create successful JSON output *)
-let success_output output_str =
-  { success = true; errors = []; output = Some output_str }
+let transpiled_output output_str =
+  { success = true; errors = []; output = Some output_str; ast = None }
 
-(** Create failed JSON output *)
+let ast_output cunits gcols errors =
+  let to_yojson (fname, cunit) =
+    let open AstToJson in
+    let gcol_list = List.filter_map (fun (f, gcol) -> if f = fname then Some gcol else None) gcols in
+    let cunit_json = compilation_unit_with_event_graph_to_yojson cunit gcol_list in
+    let _ = assert (cunit.cunit_file_name = Some fname) in
+    cunit_json
+  in
+  let ast_json_list = List.map to_yojson cunits in
+  let ast = `List ast_json_list in
+  { success = List.is_empty errors; errors; output = None; ast = Some ast }
+
 let failure_output errors =
-  { success = false; errors; output = None }
+  { success = false; errors; output = None; ast = None }

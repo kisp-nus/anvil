@@ -44,19 +44,24 @@ and concretise_dtype_params int_env type_env (dtype : data_type) : data_type =
       let params' = concretise_params int_env type_env params in
       `Named (ident, params')
   | `Record fields ->
-    let fields' = List.map (fun (field_ident, field_dtype) ->
-                        (field_ident, concretise_dtype_params int_env type_env field_dtype))
-                        fields
+    let fields' = List.map (fun node ->
+      let (field_ident, field_dtype) = node.d in
+      let new_data = (field_ident, concretise_dtype_params int_env type_env field_dtype) in
+      {
+        node with d = new_data
+      }
+    ) fields
     in
     `Record fields'
   | `Variant (dtype_opt, variants) ->
     let variants' = List.map
-            (fun (var_ident, var_dtype_opt, var_val_opt) ->
-              (
+            (fun node ->
+              let (var_ident, var_dtype_opt, var_val_opt) = node.d in
+              { node with d = (
                 var_ident,
                 Option.map (concretise_dtype_params int_env type_env) var_dtype_opt,
                 var_val_opt
-              ))
+              )})
             variants
             in
     let dtype_opt' = Option.map (concretise_dtype_params int_env type_env) dtype_opt in
@@ -73,7 +78,8 @@ let build_param_envs param_values params =
   and params_s = List.to_seq params in
   Seq.zip vals_s params_s
     |> Seq.iter
-      (fun (v, p) ->
+      (fun n ->
+        let (v, p) = n in
         match v, p.param_ty with
         | IntParamValue n, IntParam ->
           add_value p.param_name n int_env
@@ -89,27 +95,27 @@ let concretise_proc param_values proc =
   else (
     let (int_param_env, type_param_env) = build_param_envs param_values proc.params in
     let args = List.map
-      (fun ({d = a; span} : endpoint_def ast_node) ->
+      (fun ({d = a; def_span; action_event; span} : endpoint_def ast_node) ->
         let params = concretise_params int_param_env type_param_env a.channel_params in
-        {d = {a with channel_params = params}; span}
+        {d = {a with channel_params = params}; def_span; action_event; span}
       ) proc.args in
     (
       match proc.body with
       | Extern _ -> proc
       | Native body ->
         let regs = List.map
-          (fun {d = r; span} -> {d = {r with d_type = concretise_dtype_params int_param_env type_param_env r.d_type}; span})
+          (fun {d = r; def_span; action_event; span} -> {d = {r with d_type = concretise_dtype_params int_param_env type_param_env r.d_type}; def_span; action_event; span})
           body.regs in
         let spawns = List.map
-          (fun {d = sp; span} ->
+          (fun {d = sp; def_span; action_event; span} ->
             let compile_params = concretise_params int_param_env type_param_env sp.compile_params in
-            {d = {sp with compile_params}; span}
+            {d = {sp with compile_params}; def_span; action_event; span}
           )
           body.spawns in
         let channels = List.map
-          (fun {d = ch; span} ->
+          (fun {d = ch; def_span; action_event; span} ->
             let params = concretise_params int_param_env type_param_env ch.channel_params in
-            {d = {ch with channel_params = params}; span}
+            {d = {ch with channel_params = params}; def_span; action_event; span}
           )
           body.channels in
         {proc with args; body = Native {body with regs; spawns; channels}}

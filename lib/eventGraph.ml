@@ -32,7 +32,7 @@ type atomic_delay = [
   | `Sync of Lang.identifier (** synchronising on a local shared value *)
 ]
 
-type global_timed_data =
+type global_lowering_data =
 {
   mutable w : wire option;
   glt : Lang.sig_lifetime;
@@ -49,7 +49,7 @@ type lifetime = {
 (** Describe a sub-register range. *)
 and subreg_range = {
   subreg_name : Lang.identifier; (** name of the register *)
-  subreg_range_interval : timed_data MaybeConst.maybe_int_const * int;
+  subreg_range_interval : lowering_data MaybeConst.maybe_int_const * int;
     (** interval of the range (start, size) *)
 }
 
@@ -61,15 +61,19 @@ and reg_borrow = {
 }
 
 (** Data with a lifetime and potentially borrowing from a set of registers. *)
-and timed_data = {
+and lowering_data = {
   w : wire option; (** the {!type:wire} carrying the underlying raw data *)
   lt : lifetime; (** lifetime of the data *)
   reg_borrows : reg_borrow list; (** list of register borrows *)
   dtype : Lang.data_type;
 }
+
+and node_data = {
+  ld : lowering_data;
+}
 and shared_var_info = {
   assigning_thread : int;
-  value : global_timed_data;
+  value : global_lowering_data;
   mutable assigned_at : event option;
 }
 
@@ -81,17 +85,17 @@ and lvalue_info = {
 
 (** An action that is performed instantly when an event is reached. *)
 and action =
-  | DebugPrint of string * timed_data list (** debug print ([dprint]) *)
+  | DebugPrint of string * lowering_data list (** debug print ([dprint]) *)
   | DebugFinish (** [dfinish] *)
-  | RegAssign of lvalue_info * timed_data (** register assignment (technically this is not performed instantly) *)
-  | PutShared of string * shared_var_info * timed_data
-  | ImmediateSend of Lang.message_specifier * timed_data
+  | RegAssign of lvalue_info * lowering_data (** register assignment (technically this is not performed instantly) *)
+  | PutShared of string * shared_var_info * lowering_data
+  | ImmediateSend of Lang.message_specifier * lowering_data
   | ImmediateRecv of Lang.message_specifier
 
 (** Type of an action that may take multiple cycles. Those
 are basically those that synchronise through message passing. *)
 and sustained_action_type =
-  | Send of Lang.message_specifier * timed_data
+  | Send of Lang.message_specifier * lowering_data
   | Recv of Lang.message_specifier
 
 (** A condition.
@@ -102,7 +106,7 @@ The [then-] case is associated with a condition with [false] as {!neg}, whereas
 the [else-] case is associated with a condition with [true] as {!neg}.
 *)
 and condition = {
-  data : timed_data; (** the time data evaluated in the condition *)
+  data : lowering_data; (** the time data evaluated in the condition *)
   neg : bool; (** is the data negated? *)
 }
 
@@ -124,15 +128,16 @@ and event = {
   mutable outs : event list; (** the outbound edges, i.e., the events that directly depend on this event *)
   preds : Utils.int_set; (** set of predecessors, used for fast reachability query. Only used during the graph building process *)
   mutable removed : bool; (** is this event removed? (used in optimisation) *)
+  mutable expr_nodes : Lang.expr_node list; (** the AST nodes associated with this event, used for syncing event annotations on the AST *)
 }
 
 and branch_cond =
   | TrueFalse
-  | MatchCases of timed_data list
+  | MatchCases of lowering_data list
 
 (** Describes branching information. *)
 and branch_info = {
-  branch_cond_v : timed_data; (** the value used to decide branch *)
+  branch_cond_v : lowering_data; (** the value used to decide branch *)
   mutable branch_cond : branch_cond; (** conditions *)
   branch_count : int;
   mutable branches_to : event list;
@@ -170,12 +175,12 @@ and event_graph = {
   thread_id : int; (** unique identifier of the looping thread *)
   mutable events : event list;
   mutable wires : WireCollection.t;
-  channels : Lang.channel_def list; (** all channel definitions.
+  channels : Lang.channel_def Lang.ast_node list; (** all channel definitions.
           Note these do not include the channels passed from outside the process *)
   messages : MessageCollection.t; (** all messages referenceable from within the process,
             including those through channels passed from outside*)
   spawns : Lang.spawn_def Lang.ast_node list;
-  regs: Lang.reg_def Utils.string_map;
+  regs: Lang.reg_def Lang.ast_node Utils.string_map;
   mutable last_event_id: int;
   thread_codespan : Lang.code_span;
   mutable is_general_recursive : bool; (** is this a general recursive graph? *)
@@ -197,6 +202,7 @@ In addition to event graphs, it also includes the associated {{!typedefs}type de
 {{!channel_classes}channel class definitions}.
 *)
 type event_graph_collection = {
+  cunit_file_name : string option;
   event_graphs : proc_graph list;
   typedefs : TypedefMap.t;
   macro_defs : Lang.macro_def list;

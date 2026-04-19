@@ -128,7 +128,7 @@ module CombSimplPass = struct
     assert (Dynarray.length event_ufs = n);
     let add_event source =
       let new_ev = {actions = []; sustained_actions = []; source; id = graph.last_event_id + 1;
-        is_recurse = false;
+        is_recurse = false; expr_nodes = [];
         outs = []; graph; preds = Utils.IntSet.empty; removed = false } in
       graph.last_event_id <- new_ev.id;
       graph.events <- new_ev::graph.events;
@@ -390,7 +390,7 @@ module CombSimplPass = struct
           live = replace_event lt.live;
           dead = replace_event_pat lt.dead;
         }
-      and replace_timed_data td =
+      and replace_lowering_data td =
         {td with
           lt = replace_lifetime td.lt;
           reg_borrows = List.map (fun borrow ->
@@ -407,30 +407,51 @@ module CombSimplPass = struct
       in
       let replace_lvalue_info lval_info =
         let range_fst = match fst lval_info.lval_range.subreg_range_interval with
-        | MaybeConst.NonConst td -> MaybeConst.NonConst (replace_timed_data td)
+        | MaybeConst.NonConst td -> MaybeConst.NonConst (replace_lowering_data td)
         | _ -> fst lval_info.lval_range.subreg_range_interval in
         let range = (range_fst, snd lval_info.lval_range.subreg_range_interval) in
         {lval_info with lval_range = {lval_info.lval_range with subreg_range_interval = range}}
       in
       let replace_sa_type = function
-        | Send (msg, td) -> Send (msg, replace_timed_data td)
+        | Send (msg, td) -> Send (msg, replace_lowering_data td)
         | Recv msg -> Recv msg
       in
       let replace_branch_cond = function
         | TrueFalse -> TrueFalse
         | MatchCases cases ->
-          MatchCases (List.map replace_timed_data cases)
+          MatchCases (List.map replace_lowering_data cases)
+      in
+
+      (* Update both eid and ueid in action_event on annotated AST nodes to
+         reflect event renumbering/merging within this optimization pass.
+         target_eid is the new event id that owns this node (differs for
+         kept vs merged-away events).
+         For ueid, we use the union-find directly on the old ueid rather than
+         going through the mutated event_arr_old, since renumbering already
+         overwrote entries in event_arr_old with new IDs. *)
+      let update_node_ast_annotator_action_event target_eid (node : _ Lang.ast_node) =
+        match node.action_event with
+        | Some (tid, _eid, Some ueid, delay_to_exec) when ueid >= 0 && ueid < Array.length event_arr_old ->
+          let f = find_ufs event_ufs ueid in
+          let new_ueid =
+            if f >= 0 && to_keep.(f) then Some event_arr_old.(f).id
+            else Some ueid (* keep original if target not found *)
+          in
+          node.action_event <- Some (tid, target_eid, new_ueid, delay_to_exec)
+        | Some (tid, _eid, ueid, delay_to_exec) ->
+          node.action_event <- Some (tid, target_eid, ueid, delay_to_exec)
+        | None -> ()
       in
 
       let merge_event old_id ev =
         let actions = List.map (fun (action: action Lang.ast_node) ->
           let d = match action.d with
-          | DebugPrint (s, td_list) -> DebugPrint (s, List.map replace_timed_data td_list)
-          | RegAssign (lval_info, td) -> RegAssign (replace_lvalue_info lval_info, replace_timed_data td)
-          | PutShared (s, svi, td) -> PutShared (s, svi, replace_timed_data td)
+          | DebugPrint (s, td_list) -> DebugPrint (s, List.map replace_lowering_data td_list)
+          | RegAssign (lval_info, td) -> RegAssign (replace_lvalue_info lval_info, replace_lowering_data td)
+          | PutShared (s, svi, td) -> PutShared (s, svi, replace_lowering_data td)
           | DebugFinish -> DebugFinish
           | ImmediateRecv msg -> ImmediateRecv msg
-          | ImmediateSend (msg, td) -> ImmediateSend (msg, replace_timed_data td)
+          | ImmediateSend (msg, td) -> ImmediateSend (msg, replace_lowering_data td)
           in
           {action with d}
         ) ev.actions in
@@ -443,7 +464,7 @@ module CombSimplPass = struct
         ) ev.sustained_actions in
         let replace_branch_info br_info =
           {
-            branch_cond_v = replace_timed_data br_info.branch_cond_v;
+            branch_cond_v = replace_lowering_data br_info.branch_cond_v;
             branch_cond = replace_branch_cond br_info.branch_cond;
             branch_count = br_info.branch_count;
             branches_to = List.map replace_event br_info.branches_to;
@@ -456,11 +477,15 @@ module CombSimplPass = struct
         let actions = (
           List.map (fun sa_span ->
             match sa_span.d.ty with
-            | Send (msg, td) -> { d = ImmediateSend (msg, td); span = sa_span.span }
-            | Recv msg -> { d = ImmediateRecv msg; span = sa_span.span }
+            | Send (msg, td) -> { d = ImmediateSend (msg, td); def_span = sa_span.def_span; action_event = sa_span.action_event; span = sa_span.span }
+            | Recv msg -> { d = ImmediateRecv msg; def_span = sa_span.def_span; action_event = sa_span.action_event; span = sa_span.span }
           ) immediate_sa
         ) @ actions in
         if to_keep.(old_id) then (
+          (* update action_event on all AST nodes: eid -> ev.id (the renumbered id) *)
+          List.iter (update_node_ast_annotator_action_event ev.id) ev.expr_nodes;
+          List.iter (update_node_ast_annotator_action_event ev.id) actions;
+          List.iter (update_node_ast_annotator_action_event ev.id) sustained_actions;
           (* we just need to replace things *)
           ev.actions <- actions;
           ev.sustained_actions <- sustained_actions;
@@ -483,9 +508,14 @@ module CombSimplPass = struct
         ) else (
           assert (f != old_id);
           let ev_f = event_arr_old.(f) in
+          (* update action_event on all AST nodes: eid -> ev_f.id (the merge target's id) *)
+          List.iter (update_node_ast_annotator_action_event ev_f.id) ev.expr_nodes;
+          List.iter (update_node_ast_annotator_action_event ev_f.id) actions;
+          List.iter (update_node_ast_annotator_action_event ev_f.id) sustained_actions;
           ev_f.actions <- Utils.list_unordered_join ev_f.actions actions;
           ev_f.sustained_actions <- Utils.list_unordered_join ev_f.sustained_actions sustained_actions;
-          ev_f.is_recurse <- ev_f.is_recurse || ev.is_recurse (* maintain recurse event *)
+          ev_f.is_recurse <- ev_f.is_recurse || ev.is_recurse; (* maintain recurse event *)
+          ev_f.expr_nodes <- Utils.list_unordered_join ev_f.expr_nodes ev.expr_nodes
         )
       in
       List.iter2 (fun e_new e_old -> assert to_keep.(e_old.id); merge_event e_old.id e_new) events_to_keep events_to_keep_old; (* merge events to keep first *)
