@@ -112,7 +112,7 @@ let transpiled_output output_str =
 
 let ast_output cunits gcols errors =
   let to_yojson (fname, cunit) =
-    let open AstToJson in
+    let open AstJsonSerializer in
     let gcol_list = List.filter_map (fun (f, gcol) -> if f = fname then Some gcol else None) gcols in
     let cunit_json = compilation_unit_with_event_graph_to_yojson cunit gcol_list in
     let _ = assert (cunit.cunit_file_name = Some fname) in
