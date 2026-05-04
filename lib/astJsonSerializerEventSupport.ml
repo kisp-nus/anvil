@@ -4,6 +4,9 @@ open AstJsonSerializerHelpers
 type event_json_context = {
   graph_by_tid : (int, EventGraph.event_graph list) Hashtbl.t;
   channel_classes : Lang.channel_class_def list;
+  symbolic_counters : (string, int) Hashtbl.t;
+  or_symbols_by_key : (string, string) Hashtbl.t;
+  max_symbols_by_key : (string, string) Hashtbl.t;
 }
 
 let current_event_json_context : event_json_context option ref = ref None
@@ -11,17 +14,16 @@ let current_event_json_context : event_json_context option ref = ref None
 type cycle_time_sum_term =
   | CycleConstTime of int
   | CycleUnknownTime of string
-  | CycleOrTime of cycle_time_sum list
+  | CycleOrTime of string * cycle_time_sum list
   | CycleMaxTime of string * cycle_time_sum list
 
 and cycle_time_sum = cycle_time_sum_term list
 
-let rec simplify_cycle_time_sum (terms : cycle_time_sum) : cycle_time_sum =
-  match terms with
-  | [] -> []
-  | CycleConstTime n :: rest when n = 0 -> rest
-  | term :: rest -> term :: simplify_cycle_time_sum rest
+(** Canonical ordering used for stable comparisons and symbol interning.
 
+    The ordering is structural rather than semantic: terms that are only
+    algebraically equivalent still compare differently unless another helper has
+    normalized them first. Nested `Or` and `Max` branches are sorted recursively. *)
 let rec sort_cycle_time_sum (terms : cycle_time_sum) : cycle_time_sum =
   terms
   |> List.sort (fun a b ->
@@ -35,154 +37,466 @@ let rec sort_cycle_time_sum (terms : cycle_time_sum) : cycle_time_sum =
        | CycleOrTime _, _ -> 1
        | _, CycleOrTime _ -> -1)
   |> List.map (function
+       | CycleOrTime (sym, or_terms) -> CycleOrTime (sym, List.map sort_cycle_time_sum or_terms)
        | CycleMaxTime (sym, max_terms) -> CycleMaxTime (sym, List.map sort_cycle_time_sum max_terms)
        | term -> term)
 
-let equal_cycle_time_sums (terms1 : cycle_time_sum) (terms2 : cycle_time_sum) : bool =
-  let symbol_count_tbl = Hashtbl.create ((List.length terms1 + List.length terms2) * 5) in
+(** Allocate the next symbol for a given prefix (e.g., `or`, `max`, ...). *)
+let fresh_symbolic_var (ctx : event_json_context) prefix =
+  let n = Hashtbl.find_opt ctx.symbolic_counters prefix |> Option.value ~default:0 in
+  Hashtbl.replace ctx.symbolic_counters prefix (n + 1);
+  Printf.sprintf "%s%d" prefix n
 
-  let count_const terms =
+(** Reuse an existing symbol for `key`, or allocate a new one.
+
+    In other words, we look up `key` to check whether an existing symbol
+    exists for it and use it; otherwise, create a new one.
+
+    This is standard structural interning: symbol identity follows the canonical
+    expression key rather than the traversal path that discovered the expression. *)
+let intern_symbol (ctx : event_json_context) prefix key tbl =
+  match Hashtbl.find_opt tbl key with
+  | Some sym -> sym
+  | None ->
+      let sym = fresh_symbolic_var ctx prefix in
+      Hashtbl.replace tbl key sym;
+      sym
+
+(** Add a constant delay into a flat additive sum.
+
+    This helper only merges adjacent/additive constant information. It does not try
+    to distribute through `CycleOrTime`; that behavior is intentionally disabled so
+    `Or` simplification stays explicit and easier to reason about. It does collapse
+    `CycleMaxTime` to its symbolic wrapper when adding around it, matching the
+    module's current treatment of `Max` as an opaque additive term in this path. *)
+let rec add_const_to_cycle_time_sum (n : int) (terms : cycle_time_sum) : cycle_time_sum =
+  match terms with
+  | CycleConstTime m :: rest -> add_const_to_cycle_time_sum (n + m) rest
+  (* | CycleOrTime (or_sym, _) :: rest -> add_const_to_cycle_time_sum n (CycleUnknownTime or_sym :: rest) collapse terms *) (* TODO: disabled for investigation *)
+  (* | CycleMaxTime (max_sym, _) :: rest -> add_const_to_cycle_time_sum n (CycleUnknownTime max_sym :: rest) collapse terms *)
+  | _ -> if n = 0 then terms else CycleConstTime n :: terms
+
+(** Add a symbolic delay into a flat additive sum.
+
+    As with `add_const_to_cycle_time_sum`, this keeps `CycleOrTime` wrappers intact
+    and only treats `CycleMaxTime` as collapsible to its symbolic wrapper in this
+    low-level additive path. *)
+let rec add_unknown_to_cycle_time_sum (sym : string) (terms : cycle_time_sum) : cycle_time_sum =
+  match terms with
+  | CycleConstTime n :: rest -> CycleConstTime n :: add_unknown_to_cycle_time_sum sym rest
+  (* | CycleOrTime (or_sym, _) :: rest -> add_unknown_to_cycle_time_sum sym (CycleUnknownTime or_sym :: rest) collapse terms *) (* TODO: disabled for investigation *)
+  (* | CycleMaxTime (max_sym, _) :: rest -> add_unknown_to_cycle_time_sum sym (CycleUnknownTime max_sym :: rest) collapse terms *)
+  | _ -> CycleUnknownTime sym :: terms
+
+(** Canonical normalization entry point for cycle-time sums.
+
+    This keeps sums in the stable form used by the shared constructor pipelines and
+    JSON output. It merges flat constants, sorts additive terms, and recursively
+    normalizes nested `Or`/`Max` branches through the existing shared non-interning
+    constructors. *)
+let rec normalize_cycle_time_sum (terms : cycle_time_sum) : cycle_time_sum =
+  let rec add_normalized_terms acc = function
+    | [] -> acc
+    | CycleConstTime n :: rest -> add_normalized_terms (add_const_to_cycle_time_sum n acc) rest
+    | CycleUnknownTime sym :: rest -> add_normalized_terms (add_unknown_to_cycle_time_sum sym acc) rest
+    | (CycleOrTime _ as term) :: rest -> add_normalized_terms (term :: acc) rest
+    | (CycleMaxTime _ as term) :: rest -> add_normalized_terms (term :: acc) rest
+  in
+  let normalized_nested_terms =
+    List.concat_map
+      (function
+        | CycleConstTime n -> if n = 0 then [] else [CycleConstTime n]
+        | CycleUnknownTime sym -> [CycleUnknownTime sym]
+        | CycleOrTime (sym, sums) -> [CycleOrTime (sym, List.map normalize_cycle_time_sum sums)]
+        | CycleMaxTime (sym, sums) -> [CycleMaxTime (sym, List.map normalize_cycle_time_sum sums)])
+      terms
+  in
+  add_normalized_terms [] normalized_nested_terms |> sort_cycle_time_sum
+
+(** Structural serialization key for cycle-time sums.
+
+    Equal keys mean the sums are identical after the module's current canonical
+    normalization rules. This is what `interned_or_cycle_time_sum` and
+    `interned_max_cycle_time_sum` use to reuse symbolic names. *)
+let rec cycle_time_sum_key (terms : cycle_time_sum) : string =
+  normalize_cycle_time_sum terms
+  |> List.map cycle_time_sum_term_key
+  |> String.concat ";"
+
+and cycle_time_sum_term_key = function
+  | CycleConstTime n -> Printf.sprintf "const:%d" n
+  | CycleUnknownTime sym -> Printf.sprintf "sym:%s" sym
+  | CycleOrTime (_, sums) ->
+      let child_keys = List.map cycle_time_sum_key sums |> List.sort String.compare in
+      Printf.sprintf "or:[%s]" (String.concat "," child_keys)
+  | CycleMaxTime (_, sums) ->
+      let child_keys = List.map cycle_time_sum_key sums |> List.sort String.compare in
+      Printf.sprintf "max:[%s]" (String.concat "," child_keys)
+
+(** Structural equality under the canonical key.
+
+    This is stronger than raw syntactic equality because wrapper symbol names on
+    nested `Or`/`Max` terms are ignored, but weaker than full algebraic equality:
+    near-duplicate expressions only compare equal if they normalize to the same
+    structure. *)
+let equal_cycle_time_sums (terms1 : cycle_time_sum) (terms2 : cycle_time_sum) : bool =
+  cycle_time_sum_key terms1 = cycle_time_sum_key terms2
+
+(** Remove structurally duplicate branch sums while preserving first-seen order. *)
+let dedup_cycle_time_sums (sums : cycle_time_sum list) : cycle_time_sum list =
+  List.fold_left
+    (fun acc d -> if List.exists (equal_cycle_time_sums d) acc then acc else d :: acc)
+    [] sums
+  |> List.rev
+
+(** Extract the additive constant bucket from one branch. *)
+let branch_const_part (terms : cycle_time_sum) : int =
+  List.fold_left
+    (fun acc term ->
+      match term with
+      | CycleConstTime n -> acc + n
+      | _ -> acc)
+    0 terms
+
+(** Extract the non-constant additive terms from one branch.
+
+    These are later counted as a multiset when searching for a common `Or` prefix. *)
+let branch_nonconst_terms (terms : cycle_time_sum) : cycle_time_sum_term list =
+  List.filter (function CycleConstTime _ -> false | _ -> true) terms
+
+(** Factor the largest shared additive prefix out of a set of choice branches.
+
+    The prefix consists of:
+    - the minimum constant shared by every branch
+    - the minimum multiplicity of each structurally identical non-constant term
+
+    The result is `(shared_prefix, remainders)` such that each original branch is
+    structurally equivalent to `shared_prefix + remainder_i`.
+
+    This is valid for both `Or` and `Max`: if every branch contains the same
+    additive prefix, that prefix can be pulled outside the wrapper. *)
+let factor_common_choice_prefix (sums : cycle_time_sum list) : cycle_time_sum * cycle_time_sum list =
+  match sums with
+  | [] -> [], []
+  | _ ->
+      let min_const = List.fold_left (fun acc branch -> min acc (branch_const_part branch)) max_int sums in
+      let term_counts_of_branch branch =
+        let counts = Hashtbl.create 8 in
+        List.iter
+          (fun term ->
+            let key = cycle_time_sum_term_key term in
+            let count = Hashtbl.find_opt counts key |> Option.value ~default:0 in
+            Hashtbl.replace counts key (count + 1))
+          (branch_nonconst_terms branch);
+        counts
+      in
+      let shared_counts =
+        match sums with
+        | first :: rest ->
+            let shared = term_counts_of_branch first in
+            List.iter
+              (fun branch ->
+                let branch_counts = term_counts_of_branch branch in
+                let keys = Hashtbl.to_seq_keys shared |> List.of_seq in
+                List.iter
+                  (fun key ->
+                    let shared_count = Hashtbl.find shared key in
+                    let branch_count = Hashtbl.find_opt branch_counts key |> Option.value ~default:0 in
+                    if branch_count = 0 then Hashtbl.remove shared key
+                    else Hashtbl.replace shared key (min shared_count branch_count))
+                  keys)
+              rest;
+            shared
+        | [] -> Hashtbl.create 0
+      in
+      let representative_terms = Hashtbl.create 8 in
+      List.iter
+        (fun branch ->
+          List.iter
+            (fun term ->
+              let key = cycle_time_sum_term_key term in
+              if not (Hashtbl.mem representative_terms key) then Hashtbl.add representative_terms key term)
+            (branch_nonconst_terms branch))
+        sums;
+      let shared_prefix_terms =
+        let terms = ref [] in
+        if min_const > 0 then terms := CycleConstTime min_const :: !terms;
+        Hashtbl.iter
+          (fun key count ->
+            let term = Hashtbl.find representative_terms key in
+            for _ = 1 to count do
+              terms := term :: !terms
+            done)
+          shared_counts;
+        normalize_cycle_time_sum !terms
+      in
+      let remainders =
+        List.map
+          (fun branch ->
+            let remaining_const = branch_const_part branch - min_const in
+            let remaining_counts = term_counts_of_branch branch in
+            Hashtbl.iter
+              (fun key count ->
+                let current = Hashtbl.find_opt remaining_counts key |> Option.value ~default:0 in
+                let updated = current - count in
+                if updated <= 0 then Hashtbl.remove remaining_counts key
+                else Hashtbl.replace remaining_counts key updated)
+              shared_counts;
+            let terms = ref [] in
+            if remaining_const > 0 then terms := CycleConstTime remaining_const :: !terms;
+            Hashtbl.iter
+              (fun key count ->
+                let term = Hashtbl.find representative_terms key in
+                for _ = 1 to count do
+                  terms := term :: !terms
+                done)
+              remaining_counts;
+            normalize_cycle_time_sum !terms)
+          sums
+      in
+      shared_prefix_terms, remainders
+
+(** Fold branch sets that already contain all branches of a nested `Or` term.
+
+    This targets patterns like `or(base_branches..., inner_or + extra)` where the
+    outer branch set already contains every branch of `inner_or`. In that case the
+    outer branch set can keep the interned `inner_or` wrapper and drop the duplicate
+    explicit branches, which enables smaller factored forms downstream. *)
+let fold_nested_or_branches (sums : cycle_time_sum list) : cycle_time_sum list =
+  let remove_first_matching target branches =
+    let rec go prefix = function
+      | [] -> List.rev prefix
+      | branch :: rest when equal_cycle_time_sums branch target -> List.rev_append prefix rest
+      | branch :: rest -> go (branch :: prefix) rest
+    in
+    go [] branches
+  in
+  let rec step sums =
+    let rec try_branches checked = function
+      | [] -> List.rev checked
+      | branch :: rest ->
+          let rec try_terms prefix = function
+            | [] -> try_branches (branch :: checked) rest
+            | CycleOrTime (_, inner_sums) as or_term :: suffix ->
+                let inner_sums = List.map normalize_cycle_time_sum inner_sums |> dedup_cycle_time_sums in
+                if List.for_all (fun inner -> List.exists (equal_cycle_time_sums inner) sums) inner_sums then
+                  let sums_without_inner = List.fold_left (fun acc inner -> remove_first_matching inner acc) sums inner_sums in
+                  let replacement = normalize_cycle_time_sum [or_term] in
+                  let updated = dedup_cycle_time_sums (replacement :: sums_without_inner) in
+                  if List.length updated < List.length sums then step updated else try_terms (or_term :: prefix) (suffix)
+                else try_terms (or_term :: prefix) suffix
+            | term :: suffix -> try_terms (term :: prefix) suffix
+          in
+          try_terms [] branch
+    in
+    let updated = try_branches [] sums in
+    if List.length updated = List.length sums && List.for_all2 equal_cycle_time_sums updated sums then sums else step updated
+  in
+  step sums
+
+(** Shared internal `Or` constructor pipeline.
+
+    All `Or` construction flows through here so the module applies one consistent
+    normalization sequence:
+    - canonicalize each branch
+    - flatten nested one-term `Or`s
+    - deduplicate equal branches
+    - fold nested `Or` containment patterns
+    - factor a shared additive prefix
+    - collapse empty/singleton cases
+    - resolve a symbol only for the remaining irreducible `Or` wrapper
+
+    `resolve_sym` is the only policy hook: non-interned callers provide a fixed
+    symbol, while interned callers derive/reuse one from the normalized branches. *)
+let or_cycle_time_sum_with (resolve_sym : cycle_time_sum list -> string) (sums : cycle_time_sum list) : cycle_time_sum =
+  let rec flatten_or terms =
+    match terms with
+    | [] -> []
+    | [CycleOrTime (_, inner_sums)] :: rest -> flatten_or inner_sums @ flatten_or rest
+    | term :: rest -> term :: flatten_or rest
+  in
+  let normalized_sums =
+    sums
+    |> List.map normalize_cycle_time_sum
+    |> flatten_or
+    |> dedup_cycle_time_sums
+    |> fold_nested_or_branches
+    |> dedup_cycle_time_sums
+  in
+  match normalized_sums with
+  | [] -> []
+  | [single] -> single
+  | _ ->
+      let shared_prefix, remainders = factor_common_choice_prefix normalized_sums in
+      let remainders = remainders |> dedup_cycle_time_sums in
+      let or_remainder =
+        match remainders with
+        | [] -> []
+        | [single] -> single
+        | merged_sums -> [CycleOrTime (resolve_sym merged_sums, merged_sums)]
+      in
+      normalize_cycle_time_sum (shared_prefix @ or_remainder)
+
+(** Construct an `Or` wrapper without interning.
+    (i.e., w/o reusing existing symbols/objects when possible). *)
+let or_cycle_time_sum (sym : string) (sums : cycle_time_sum list) : cycle_time_sum =
+  or_cycle_time_sum_with (fun _ -> sym) sums
+
+(** Construct an `Or` wrapper and intern its symbol by structural key.
+    This means if an existing or expression already exists, its symbol is reused. *)
+let interned_or_cycle_time_sum (ctx : event_json_context) (sums : cycle_time_sum list) : cycle_time_sum =
+  or_cycle_time_sum_with
+    (fun merged_sums ->
+      let key = Printf.sprintf "or:[%s]" (List.map cycle_time_sum_key merged_sums |> List.sort String.compare |> String.concat ",") in
+      intern_symbol ctx "or" key ctx.or_symbols_by_key)
+    sums
+
+(** Conservative dominance merge for two `Max` branches.
+
+    If one branch is known to be at least as large as the other under the module's
+    current symbolic comparison, returns the dominating branch. Otherwise returns
+    `None` and keeps both branches. *)
+let merge_max_of sum1 sum2 =
+  let const1 =
     List.fold_left
       (fun acc term ->
         match term with
         | CycleConstTime n -> acc + n
         | _ -> acc)
-      0 terms
+      0 sum1
   in
+  let symbolic1 =
+    List.filter (function CycleConstTime _ -> false | _ -> true) sum1 |> sort_cycle_time_sum
+  in
+  let const2 =
+    List.fold_left
+      (fun acc term ->
+        match term with
+        | CycleConstTime n -> acc + n
+        | _ -> acc)
+      0 sum2
+  in
+  let symbolic2 =
+    List.filter (function CycleConstTime _ -> false | _ -> true) sum2 |> sort_cycle_time_sum
+  in
+  let max_of_consts = max const1 const2 in
 
-  let count_terms terms dir =
+  if symbolic1 = symbolic2 then
+    if max_of_consts = 0 then Some symbolic1 else Some (CycleConstTime max_of_consts :: symbolic1)
+  else
+    let sym1_counts = Hashtbl.create 10 in
+    let sym2_counts = Hashtbl.create 10 in
     List.iter
       (function
-        | CycleUnknownTime sym
-        | CycleMaxTime (sym, _) ->
-            let count = Hashtbl.find_opt symbol_count_tbl sym |> Option.value ~default:0 in
-            Hashtbl.replace symbol_count_tbl sym (count + dir)
+        | CycleUnknownTime s ->
+            let count = Hashtbl.find_opt sym1_counts s |> Option.value ~default:0 in
+            Hashtbl.replace sym1_counts s (count + 1)
         | _ -> ())
-      terms
-  in
+      symbolic1;
+    List.iter
+      (function
+        | CycleUnknownTime s ->
+            let count = Hashtbl.find_opt sym2_counts s |> Option.value ~default:0 in
+            Hashtbl.replace sym2_counts s (count + 1)
+        | _ -> ())
+      symbolic2;
 
-  count_terms terms1 (+1);
-  count_terms terms2 (-1);
+    let sym1_greater =
+      Hashtbl.fold
+        (fun s count acc ->
+          let sym2_count = Hashtbl.find_opt sym2_counts s |> Option.value ~default:0 in
+          count > sym2_count || acc)
+        sym1_counts false
+    in
+    let sym2_greater =
+      Hashtbl.fold
+        (fun s count acc ->
+          let sym1_count = Hashtbl.find_opt sym1_counts s |> Option.value ~default:0 in
+          count > sym1_count || acc)
+        sym2_counts false
+    in
 
-  Hashtbl.fold (fun _ count acc -> count = 0 && acc) symbol_count_tbl true
-  && count_const terms1 = count_const terms2
+    if sym1_greater && not sym2_greater then Some (CycleConstTime max_of_consts :: symbolic1)
+    else if sym2_greater && not sym1_greater then Some (CycleConstTime max_of_consts :: symbolic2)
+    else None
 
-let rec add_const_to_cycle_time_sum (n : int) (terms : cycle_time_sum) : cycle_time_sum =
+(** Flatten nested one-term `Max` wrappers into one branch list. *)
+let rec flatten_max_branches sums =
+  match sums with
+  | [] -> []
+  | [CycleMaxTime (_, inner_max_terms)] :: rest -> flatten_max_branches inner_max_terms @ flatten_max_branches rest
+  | term :: rest -> term :: flatten_max_branches rest
+
+(** Repeatedly apply conservative dominance merging within one `Max` branch list. *)
+let rec merge_max_branches terms =
   match terms with
-  | CycleConstTime m :: rest -> add_const_to_cycle_time_sum (n + m) rest
-  | CycleMaxTime (max_sym, _) :: rest -> add_const_to_cycle_time_sum n (CycleUnknownTime max_sym :: rest)
-  | _ -> if n = 0 then terms else CycleConstTime n :: terms
+  | t1 :: t2 :: rest -> (
+      match merge_max_of t1 t2 with
+      | Some merged -> merge_max_branches (merged :: rest)
+      | None -> t1 :: merge_max_branches (t2 :: rest))
+  | terms -> terms
 
-let rec add_unknown_to_cycle_time_sum (sym : string) (terms : cycle_time_sum) : cycle_time_sum =
-  match terms with
-  | CycleConstTime n :: rest -> CycleConstTime n :: add_unknown_to_cycle_time_sum sym rest
-  | CycleMaxTime (max_sym, _) :: rest -> add_unknown_to_cycle_time_sum sym (CycleUnknownTime max_sym :: rest)
-  | _ -> CycleUnknownTime sym :: terms
+(** Shared internal `Max` constructor pipeline.
 
-let or_cycle_time_sum (sums : cycle_time_sum list) : cycle_time_sum =
-  let rec flatten_or terms =
-    match terms with
-    | [] -> []
-    | [CycleOrTime inner_sums] :: rest -> flatten_or inner_sums @ flatten_or rest
-    | term :: rest -> term :: flatten_or rest
+    This mirrors the `Or` constructor cleanup at a lower algebraic power:
+    - canonicalize each branch
+    - flatten nested one-term `Max`s
+    - deduplicate equal branches
+    - factor a shared additive prefix
+    - apply conservative dominance merging
+    - collapse empty/singleton cases
+    - resolve a symbol only for the remaining irreducible `Max` wrapper *)
+let max_cycle_time_sum_with (resolve_sym : cycle_time_sum list -> string) (max_terms : cycle_time_sum list) : cycle_time_sum =
+  let normalized_terms =
+    max_terms
+    |> List.map normalize_cycle_time_sum
+    |> flatten_max_branches
+    |> dedup_cycle_time_sums
   in
-  match flatten_or sums with
+  match normalized_terms with
   | [] -> []
   | [single] -> single
-  | merged_sums -> [CycleOrTime merged_sums]
+  | _ ->
+      let shared_prefix, remainders = factor_common_choice_prefix normalized_terms in
+      let merged_remainders = remainders |> dedup_cycle_time_sums |> merge_max_branches in
+      let max_remainder =
+        match merged_remainders with
+        | [] -> []
+        | [single] -> single
+        | merged_terms -> [CycleMaxTime (resolve_sym merged_terms, merged_terms)]
+      in
+      normalize_cycle_time_sum (shared_prefix @ max_remainder)
 
+(** Construct a `Max` wrapper without interning
+    (i.e., w/o reusing existing symbols/objects when possible). *)
 let max_cycle_time_sum (sym : string) (max_terms : cycle_time_sum list) : cycle_time_sum =
-  let merge_max_of sum1 sum2 =
-    let const1 =
-      List.fold_left
-        (fun acc term ->
-          match term with
-          | CycleConstTime n -> acc + n
-          | _ -> acc)
-        0 sum1
-    in
-    let symbolic1 =
-      List.filter (function CycleConstTime _ -> false | _ -> true) sum1 |> sort_cycle_time_sum
-    in
-    let const2 =
-      List.fold_left
-        (fun acc term ->
-          match term with
-          | CycleConstTime n -> acc + n
-          | _ -> acc)
-        0 sum2
-    in
-    let symbolic2 =
-      List.filter (function CycleConstTime _ -> false | _ -> true) sum2 |> sort_cycle_time_sum
-    in
-    let max_of_consts = max const1 const2 in
+  max_cycle_time_sum_with (fun _ -> sym) max_terms
 
-    if symbolic1 = symbolic2 then
-      if max_of_consts = 0 then Some symbolic1 else Some (CycleConstTime max_of_consts :: symbolic1)
-    else
-      let sym1_counts = Hashtbl.create 10 in
-      let sym2_counts = Hashtbl.create 10 in
-      List.iter
-        (function
-          | CycleUnknownTime s ->
-              let count = Hashtbl.find_opt sym1_counts s |> Option.value ~default:0 in
-              Hashtbl.replace sym1_counts s (count + 1)
-          | _ -> ())
-        symbolic1;
-      List.iter
-        (function
-          | CycleUnknownTime s ->
-              let count = Hashtbl.find_opt sym2_counts s |> Option.value ~default:0 in
-              Hashtbl.replace sym2_counts s (count + 1)
-          | _ -> ())
-        symbolic2;
+(** Construct a `Max` wrapper and intern its symbol by structural key.
+    This means if an existing or expression already exists, its symbol is reused. *)
+let interned_max_cycle_time_sum (ctx : event_json_context) (max_terms : cycle_time_sum list) : cycle_time_sum =
+  max_cycle_time_sum_with
+    (fun merged_terms ->
+      let key = Printf.sprintf "max:[%s]" (List.map cycle_time_sum_key merged_terms |> List.sort String.compare |> String.concat ",") in
+      intern_symbol ctx "max" key ctx.max_symbols_by_key)
+    max_terms
 
-      let sym1_greater =
-        Hashtbl.fold
-          (fun s count acc ->
-            let sym2_count = Hashtbl.find_opt sym2_counts s |> Option.value ~default:0 in
-            count > sym2_count || acc)
-          sym1_counts false
-      in
-      let sym2_greater =
-        Hashtbl.fold
-          (fun s count acc ->
-            let sym1_count = Hashtbl.find_opt sym1_counts s |> Option.value ~default:0 in
-            count > sym1_count || acc)
-          sym2_counts false
-      in
+(** Add one cycle-time sum on top of another.
 
-      if sym1_greater && not sym2_greater then Some (CycleConstTime max_of_consts :: symbolic1)
-      else if sym2_greater && not sym1_greater then Some (CycleConstTime max_of_consts :: symbolic2)
-      else None
-  in
-
-  let rec flatten_max sums =
-    match sums with
-    | [] -> []
-    | [CycleMaxTime (_, inner_max_terms)] :: rest -> flatten_max inner_max_terms @ flatten_max rest
-    | term :: rest -> term :: flatten_max rest
-  in
-
-  let rec merge_maxes terms =
-    match terms with
-    | t1 :: t2 :: rest -> (
-        match merge_max_of t1 t2 with
-        | Some merged -> merge_maxes (merged :: rest)
-        | None -> t1 :: merge_maxes (t2 :: rest))
-    | terms -> terms
-  in
-
-  [CycleMaxTime (sym, max_terms |> flatten_max |> merge_maxes)]
-
+    Flat constants and unknowns are merged directly. `CycleOrTime` and
+    `CycleMaxTime` are reconstructed through their respective constructors so their
+    wrapper structure remains explicit in the result. This helper is compositional,
+    not fully normalizing: it preserves enough structure for later interning and
+    JSON output rather than trying to perform aggressive algebraic simplification. *)
 let rec extend_cycle_time_sums (terms1 : cycle_time_sum) (terms2 : cycle_time_sum) : cycle_time_sum =
   match terms1 with
   | [] -> terms2
   | CycleConstTime n :: rest -> extend_cycle_time_sums rest terms2 |> add_const_to_cycle_time_sum n
   | CycleUnknownTime sym :: rest -> extend_cycle_time_sums rest terms2 |> add_unknown_to_cycle_time_sum sym
-  | CycleOrTime sums :: rest -> or_cycle_time_sum sums @ extend_cycle_time_sums rest terms2
+  | CycleOrTime (sym, sums) :: rest -> or_cycle_time_sum sym sums @ extend_cycle_time_sums rest terms2
   | CycleMaxTime (sym, terms) :: rest -> max_cycle_time_sum sym terms @ extend_cycle_time_sums rest terms2
 
+(** Translate a frontend `exec_delay` annotation into the internal sum form. *)
 let cycle_time_sum_of_exec_delay (delay : Lang.exec_delay) : cycle_time_sum =
   List.fold_left
     (fun acc term ->
@@ -191,6 +505,10 @@ let cycle_time_sum_of_exec_delay (delay : Lang.exec_delay) : cycle_time_sum =
       | DelaySym sym -> add_unknown_to_cycle_time_sum sym acc)
     [] delay
 
+(** Convert a single event-graph edge delay into a cycle-time sum.
+
+    Message/sync edges reuse the symbolic delay names attached earlier by
+    `AstAnnotator`, so later structural interning can see consistent leaf symbols. *)
 let atomic_delay_to_cycle_time_sum (tid : int) (from_ev : EventGraph.event) (to_ev : EventGraph.event)
     (ad : EventGraph.atomic_delay) : cycle_time_sum =
   match ad with
@@ -200,7 +518,12 @@ let atomic_delay_to_cycle_time_sum (tid : int) (from_ev : EventGraph.event) (to_
       | Some sym -> [CycleUnknownTime sym]
       | None -> [])
 
-let rel_delays_from_event (graph : EventGraph.event_graph) (origin : EventGraph.event) : (int, cycle_time_sum) Hashtbl.t =
+(** Compute symbolic delays from `origin` to every reachable event in one thread.
+
+    Branches are combined with interned `Or` terms and `Later` joins with interned
+    `Max` terms so equivalent relative-delay expressions discovered from different
+    origins/traversals can still share symbols inside one serialization context. *)
+let rel_delays_from_event (ctx : event_json_context) (graph : EventGraph.event_graph) (origin : EventGraph.event) : (int, cycle_time_sum) Hashtbl.t =
   let max_eid = List.fold_left (fun n (e : EventGraph.event) -> max n e.id) 0 graph.events in
   let dist : cycle_time_sum option array = Array.make (max_eid + 1) None in
   let set_dist (ev : EventGraph.event) d = if ev.id >= 0 && ev.id <= max_eid then dist.(ev.id) <- Some d in
@@ -221,18 +544,18 @@ let rel_delays_from_event (graph : EventGraph.event_graph) (origin : EventGraph.
               Option.map (fun d0 -> extend_cycle_time_sums (atomic_delay_to_cycle_time_sum graph.thread_id e0 ev ad) d0) (get_dist e0)
           | `Later (e1, e2) -> (
               match get_dist e1, get_dist e2 with
-              | Some d1, Some d2 -> Some (max_cycle_time_sum (Printf.sprintf "max_rel_%d_%d" origin.id ev.id) [d1; d2])
+              | Some d1, Some d2 -> Some (interned_max_cycle_time_sum ctx [d1; d2])
               | _ -> None)
           | `Branch (_, { branches_val; _ }) ->
               let ds = List.filter_map get_dist branches_val in
               (match ds with
               | [] -> None
               | [d] -> Some d
-              | _ ->
-                  let unique_ds =
-                    List.fold_left (fun acc d -> if List.exists (equal_cycle_time_sums d) acc then acc else d :: acc) [] ds
-                  in
-                  Some (or_cycle_time_sum unique_ds))
+               | _ ->
+                   let unique_ds =
+                     List.fold_left (fun acc d -> if List.exists (equal_cycle_time_sums d) acc then acc else d :: acc) [] ds
+                   in
+                   Some (interned_or_cycle_time_sum ctx unique_ds))
         in
         match d with Some d' -> set_dist ev d' | None -> ())
     events_topo;
@@ -284,7 +607,7 @@ let sustain_lifetime_for_msg (ctx : event_json_context) (tid : int) (base_eid : 
         | Some base_ev, Some (msg_spec', msg_def) ->
             let stype = List.hd msg_def.sig_types in
             let dpat = delay_pat_globalise msg_spec'.endpoint stype.lifetime.e in
-            let rel_delays = rel_delays_from_event graph base_ev in
+            let rel_delays = rel_delays_from_event ctx graph base_ev in
             let computed =
               match dpat with
               | `Cycles n -> Some (add_const_to_cycle_time_sum n [])
@@ -301,7 +624,7 @@ let sustain_lifetime_for_msg (ctx : event_json_context) (tid : int) (base_eid : 
                     match sums with
                     | [] -> None
                     | [single] -> Some single
-                    | _ -> Some (or_cycle_time_sum sums)
+                    | _ -> Some (or_cycle_time_sum (Printf.sprintf "or_sustain_%d_%s_%s" base_eid msg.endpoint msg.msg) sums)
                   in
                   (match direct with
                   | Some _ -> direct
@@ -311,7 +634,7 @@ let sustain_lifetime_for_msg (ctx : event_json_context) (tid : int) (base_eid : 
                       (match recurse_event, root_event with
                       | Some recurse_ev, Some root_ev ->
                           let base_to_recurse = Hashtbl.find_opt rel_delays recurse_ev.id in
-                          let root_rel_delays = rel_delays_from_event graph root_ev in
+                          let root_rel_delays = rel_delays_from_event ctx graph root_ev in
                           let msg_events = GraphAnalysis.events_with_msg graph.events msg in
                           let sums_from_loop =
                             List.filter_map
@@ -324,7 +647,7 @@ let sustain_lifetime_for_msg (ctx : event_json_context) (tid : int) (base_eid : 
                           (match sums_from_loop with
                           | [] -> None
                           | [single] -> Some single
-                          | _ -> Some (or_cycle_time_sum sums_from_loop))
+                          | _ -> Some (or_cycle_time_sum (Printf.sprintf "or_loop_%d_%s" base_eid msg.msg) sums_from_loop))
                       | _ -> None))
               | `Message_with_offset (_msg, _off, false) -> None
             in
@@ -347,9 +670,9 @@ let rec symbolic_sum_to_yojson (terms : cycle_time_sum) : Yojson.Safe.t =
     (function
       | CycleConstTime n -> assoc [("const", int n)]
       | CycleUnknownTime sym -> assoc [("sym", str sym)]
-      | CycleOrTime sums -> assoc [("or", list symbolic_sum_to_yojson sums)]
+      | CycleOrTime (sym, sums) -> assoc [("sym", str sym); ("or", list symbolic_sum_to_yojson sums)]
       | CycleMaxTime (sym, max_terms) -> assoc [("sym", str sym); ("max", list symbolic_sum_to_yojson max_terms)])
-    (simplify_cycle_time_sum terms)
+    (normalize_cycle_time_sum terms)
 
 let ast_node_event_to_yojson = function
   | Some (tid, eid, delay_to_exec) ->
@@ -378,11 +701,10 @@ let expr_node_event_to_yojson (expr : expr) = function
   | None -> `Null
 
 let event_graph_collection_to_yojson (gc : EventGraph.event_graph_collection) : Yojson.Safe.t list =
-  let symbolic_counter = ref 0 in
-  let fresh_symbolic_var prefix =
-    let n = !symbolic_counter in
-    symbolic_counter := n + 1;
-    Printf.sprintf "%s%d" prefix n
+  let ctx =
+    match !current_event_json_context with
+    | Some ctx -> ctx
+    | None -> failwith "event_graph_collection_to_yojson called without event JSON context"
   in
 
   let event_graph_to_order (t : EventGraph.event_graph) =
@@ -408,13 +730,13 @@ let event_graph_collection_to_yojson (gc : EventGraph.event_graph_collection) : 
           | `Later (e1, e2) ->
               let e1_delays = compute_delays e1 in
               let e2_delays = compute_delays e2 in
-              max_cycle_time_sum (fresh_symbolic_var "max") [e1_delays; e2_delays]
+              interned_max_cycle_time_sum ctx [e1_delays; e2_delays]
           | `Branch (_, branch_info) ->
               let other_delays = List.map (fun (oe : EventGraph.event) -> compute_delays oe) branch_info.branches_val in
               let unique_other_delays =
                 List.fold_left (fun acc d -> if List.exists (equal_cycle_time_sums d) acc then acc else d :: acc) [] other_delays
               in
-              or_cycle_time_sum unique_other_delays
+              interned_or_cycle_time_sum ctx unique_other_delays
         in
         Hashtbl.add delays_memo ev.id delays;
         delays
@@ -456,7 +778,13 @@ let build_event_json_context channel_classes (gcl : EventGraph.event_graph_colle
             pg.threads)
         gcol.event_graphs)
     gcl;
-  { graph_by_tid; channel_classes }
+  {
+    graph_by_tid;
+    channel_classes;
+    symbolic_counters = Hashtbl.create 4;
+    or_symbols_by_key = Hashtbl.create 32;
+    max_symbols_by_key = Hashtbl.create 32;
+  }
 
 let with_event_json_context channel_classes gcl f =
   let prev_ctx = !current_event_json_context in
