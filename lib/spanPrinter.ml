@@ -1,12 +1,16 @@
 (* Library for printing and rendering code spans as strings. *)
 
 (** Get a span of code as a formatted string that may be printed or displayed.
+    The file name is read from the span's [Lexing.position.pos_fname].
     [trunc] specifies the truncation: [0] for no truncation, positive for truncating at the start,
     and negative for truncating to the end (keeping [trunc] lines).
  *)
-let string_of_code_span ?(indent = 2) ?(trunc = 0) filename span =
-  let repeat_s s times = Seq.repeat s |> Seq.take times |> List.of_seq |> String.concat "" in
+let string_of_code_span ?(indent = 2) ?(trunc = 0) span =
   let open Lang in
+  let filename = span.st.Lexing.pos_fname in
+  if filename = "" then None
+  else
+  let repeat_s s times = Seq.repeat s |> Seq.take times |> List.of_seq |> String.concat "" in
   let indent_s = repeat_s " " indent in
   let buf = Buffer.create 256 in
   let result =
@@ -44,7 +48,7 @@ let string_of_code_span ?(indent = 2) ?(trunc = 0) filename span =
   result
 
 (** Prints out a span of code. See: [string_of_code_span]. *)
-let print_code_span ?(indent = 2) ?(trunc = 0) out filename span =
-  match string_of_code_span ~indent ~trunc filename span with
+let print_code_span ?(indent = 2) ?(trunc = 0) out span =
+  match string_of_code_span ~indent ~trunc span with
   | Some s -> output_string out s
   | None -> ()

@@ -235,7 +235,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
           if td1.ld.lt.live.id <> ctx.current.id && not binding.binding_used then (
             (* raise (event_graph_error_default "Value is potentially not awaited!" e1.span) *)
             Printf.eprintf "[Warning] Value bound to %s is potentially not awaited!\n" ident;
-            (SpanPrinter.print_code_span ~indent:2 ~trunc:(-5) stderr ci.file_name e1.span)
+            (SpanPrinter.print_code_span ~indent:2 ~trunc:(-5) stderr e1.span)
           ;
           );
           td

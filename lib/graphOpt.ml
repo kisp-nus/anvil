@@ -539,7 +539,7 @@ let optimize config for_lt_check ci graph =
 
 
 
-let combinational_codegen (config : Config.compile_config) (graph : event_graph) (ci : cunit_info) : event_graph = 
+let combinational_codegen (config : Config.compile_config) (graph : event_graph) (_ci : cunit_info) : event_graph = 
   if config.opt_level > 2 then (
     let last_event = List.hd (List.rev graph.events) in
     if (((List.length graph.events) = 2)  && (List.is_empty last_event.sustained_actions)) then (
@@ -555,7 +555,7 @@ let combinational_codegen (config : Config.compile_config) (graph : event_graph)
           | DebugFinish
           | DebugPrint _ -> (
             Printf.eprintf "[Warning] Optimization for combinational possible but skipping for there being Debug actions in %d thread\n" graph.thread_id;
-            (SpanPrinter.print_code_span ~indent:2 ~trunc:(-5) stderr ci.file_name a.span);
+            (SpanPrinter.print_code_span ~indent:2 ~trunc:(-5) stderr a.span);
             false
           )
           | _ -> true

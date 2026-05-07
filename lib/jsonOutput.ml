@@ -37,16 +37,16 @@ let error_message_to_json_errors (error_type : string) (msg : Except.error_messa
       | Text desc -> { kind = "text"; text = Some desc; trace = None }
       | Codespan (path, span) ->
         let open Lang in
+        let resolved_path = match path with
+          | Some f -> Some f
+          | None -> (let f = span.st.pos_fname in if f = "" then None else Some f)
+        in
         let trace = {
-          path;
+          path = resolved_path;
           start_pos = { line = span.st.pos_lnum; col = span.st.pos_cnum - span.st.pos_bol };
           end_pos = { line = span.ed.pos_lnum; col = span.ed.pos_cnum - span.ed.pos_bol };
         } in
-        let str =
-          match path with
-          | None -> None
-          | Some filename -> SpanPrinter.string_of_code_span filename span
-        in
+        let str = SpanPrinter.string_of_code_span span in
         { kind = "codespan"; text = str; trace = Some trace }
     ) msg
   in
