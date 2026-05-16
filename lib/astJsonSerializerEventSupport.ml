@@ -622,16 +622,34 @@ let rel_delays_from_event (_ctx : event_json_context) (graph : EventGraph.event_
     Supported lifetime forms:
     - `#n`: a constant `n`-cycle sustain lifetime
     - `eternal`: represented as the empty additive sum
-    - `msg + off`: the delay from `base_eid` to the first reachable matching
-      message-completion event, plus `off`
+    - `msg + off`: the delay from the effective origin event to the first reachable
+      matching message-completion event, plus `off`
+
+    For sends, the effective origin is the send-completion event rather than the
+    expression's annotated start event. This matches the internal lifetime-checker
+    model: the payload lifetime for `send ch.msg(...)` begins once the send has
+    completed, so the send's own wait-to-complete must not be counted twice.
+
+    For receives, the effective origin remains the expression's annotated event.
+    `recv ch.msg` is annotated at the receive-completion event already, so dependent
+    lifetimes are measured from the point where the value actually becomes available.
 
     For recursive threads, `msg + off` also has a loop fallback: if no reachable
     matching message is found before the recurse edge, we compose the delay from the
     base event to the recurse event with the delay from the root event to a matching
     message in the next iteration. *)
-let sustain_lifetime_for_msg (ctx : event_json_context) (tid : int) (base_eid : int) (msg_spec : message_specifier) : cycle_time_sum option =
+let sustain_lifetime_for_msg (ctx : event_json_context) (tid : int) (base_eid : int)
+    ~(from_send_completion : bool) (msg_spec : message_specifier) : cycle_time_sum option =
   let proc_ctx = current_process_ctx () in
   let graphs = Hashtbl.find_opt ctx.graph_by_tid tid |> Option.value ~default:[] in
+  let matching_send_completion_event (base_ev : EventGraph.event) (spec : message_specifier) =
+    List.find_map
+      (fun (sa_span : EventGraph.sustained_action Lang.ast_node) ->
+        match sa_span.d.ty with
+        | Send (msg_spec', _) when msg_spec' = spec -> Some sa_span.d.until
+        | _ -> None)
+      base_ev.sustained_actions
+  in
   let lookup_message_allow_foreign (graph : EventGraph.event_graph) (spec : message_specifier) =
     let ( let* ) = Option.bind in
     let* endpoint = MessageCollection.lookup_endpoint graph.messages spec.endpoint in
@@ -668,7 +686,13 @@ let sustain_lifetime_for_msg (ctx : event_json_context) (tid : int) (base_eid : 
         | Some base_ev, Some (msg_spec', msg_def) ->
             let stype = List.hd msg_def.sig_types in
             let dpat = delay_pat_globalise msg_spec'.endpoint stype.lifetime.e in
-            let rel_delays = rel_delays_from_event ctx graph base_ev in
+            let origin_ev =
+              if from_send_completion then
+                Option.value ~default:base_ev (matching_send_completion_event base_ev msg_spec')
+              else
+                base_ev
+            in
+            let rel_delays = rel_delays_from_event ctx graph origin_ev in
             let computed =
               match dpat with
               | `Cycles n -> Some (add_const_to_cycle_time_sum n [])
@@ -725,8 +749,8 @@ let sustain_lifetime_of_expr_event (expr : expr) (tid : int) (eid : int) : cycle
   match !current_event_json_context with
   | Some ctx -> (
       match expr with
-      | Send sp -> sustain_lifetime_for_msg ctx tid eid sp.send_msg_spec
-      | Recv rp -> sustain_lifetime_for_msg ctx tid eid rp.recv_msg_spec
+      | Send sp -> sustain_lifetime_for_msg ctx tid eid ~from_send_completion:true sp.send_msg_spec
+      | Recv rp -> sustain_lifetime_for_msg ctx tid eid ~from_send_completion:false rp.recv_msg_spec
       | _ -> None)
   | None -> None
 
