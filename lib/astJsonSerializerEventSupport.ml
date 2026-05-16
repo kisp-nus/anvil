@@ -569,6 +569,29 @@ let rel_delays_from_event (ctx : event_json_context) (graph : EventGraph.event_g
     graph.events;
   memo
 
+(** Reconstruct the sustain lifetime attached to a send/recv expression event.
+
+    The serializer only stores the expression's starting `(tid, eid)` annotation, so
+    this helper recomputes the lifetime from the event graph plus the message
+    signature's declared lifetime.
+
+    Resolution is intentionally tolerant of serializer-only context:
+    - it tries every graph recorded for the thread id
+    - it can resolve foreign endpoints by rebuilding a concrete message def from the
+      endpoint's channel class
+    - it probes endpoint aliases if the original endpoint name does not resolve in
+      the candidate graph
+
+    Supported lifetime forms:
+    - `#n`: a constant `n`-cycle sustain lifetime
+    - `eternal`: represented as the empty additive sum
+    - `msg + off`: the delay from `base_eid` to the first reachable matching
+      message-completion event, plus `off`
+
+    For recursive threads, `msg + off` also has a loop fallback: if no reachable
+    matching message is found before the recurse edge, we compose the delay from the
+    base event to the recurse event with the delay from the root event to a matching
+    message in the next iteration. *)
 let sustain_lifetime_for_msg (ctx : event_json_context) (tid : int) (base_eid : int) (msg_spec : message_specifier) : cycle_time_sum option =
   let graphs = Hashtbl.find_opt ctx.graph_by_tid tid |> Option.value ~default:[] in
   let lookup_message_allow_foreign (graph : EventGraph.event_graph) (spec : message_specifier) =
@@ -620,14 +643,14 @@ let sustain_lifetime_for_msg (ctx : event_json_context) (tid : int) (base_eid : 
                         Hashtbl.find_opt rel_delays ev.id |> Option.map (fun d -> add_const_to_cycle_time_sum off d))
                       first_events
                   in
-                  let direct =
+                  let direct_sustain =
                     match sums with
                     | [] -> None
                     | [single] -> Some single
-                    | _ -> Some (or_cycle_time_sum (Printf.sprintf "or_sustain_%d_%s_%s" base_eid msg.endpoint msg.msg) sums)
+                    | _ -> Some (interned_or_cycle_time_sum ctx sums)
                   in
-                  (match direct with
-                  | Some _ -> direct
+                  (match direct_sustain with
+                  | Some _ -> direct_sustain
                   | None ->
                       let recurse_event = List.find_opt (fun (e : EventGraph.event) -> e.is_recurse) graph.events in
                       let root_event = List.find_opt (fun (e : EventGraph.event) -> e.source = `Root None) graph.events in
@@ -636,7 +659,7 @@ let sustain_lifetime_for_msg (ctx : event_json_context) (tid : int) (base_eid : 
                           let base_to_recurse = Hashtbl.find_opt rel_delays recurse_ev.id in
                           let root_rel_delays = rel_delays_from_event ctx graph root_ev in
                           let msg_events = GraphAnalysis.events_with_msg graph.events msg in
-                          let sums_from_loop =
+                          let loop_sums =
                             List.filter_map
                               (fun (ev : EventGraph.event) ->
                                 match base_to_recurse, Hashtbl.find_opt root_rel_delays ev.id with
@@ -644,10 +667,10 @@ let sustain_lifetime_for_msg (ctx : event_json_context) (tid : int) (base_eid : 
                                 | _ -> None)
                               msg_events
                           in
-                          (match sums_from_loop with
+                          (match loop_sums with
                           | [] -> None
                           | [single] -> Some single
-                          | _ -> Some (or_cycle_time_sum (Printf.sprintf "or_loop_%d_%s" base_eid msg.msg) sums_from_loop))
+                          | _ -> Some (interned_or_cycle_time_sum ctx loop_sums))
                       | _ -> None))
               | `Message_with_offset (_msg, _off, false) -> None
             in
@@ -656,6 +679,10 @@ let sustain_lifetime_for_msg (ctx : event_json_context) (tid : int) (base_eid : 
   in
   try_graphs graphs
 
+(** Compute the optional `sustain_lifetime` JSON field for expression events.
+
+    Only send/recv expressions can introduce sustained actions, so other expression
+    forms deliberately omit the field. *)
 let sustain_lifetime_of_expr_event (expr : expr) (tid : int) (eid : int) : cycle_time_sum option =
   match !current_event_json_context with
   | Some ctx -> (
