@@ -1,6 +1,23 @@
 open Lang
 open AstJsonSerializerHelpers
 
+(*
+
+TODO: This submodule is a temporary placeholder for the AST JSON seralizer that simultaneously performs: JSON serialization,
+and certain specifics of the event-graph analysis and traversal logic needed to compute the abstract cycle delays and
+value sustain lifetimes in concrete/symbolic terms. The logic is inferred from the actual compilation stages.
+
+However, these concrete/symbolic terms should be best done during the actual graph analysis phase _during_ compilation,
+rather than as a postprocessing step during JSON serialization. In other words, it should be rewritten in the future
+to only contain the JSON serialization logic to prevent code/semantics drift, unnecessary behavior duplication,
+and ease of reuse for other semantic analyses or improved error reporting that weren't possible in the existing compiler
+as of writing.
+
+The goal for the AST JSON serializer should be that it'll be a pure translation layer from the compiler's internal
+representations of event data to the JSON AST, without any logic implemented out of it like here.
+
+ *)
+
 type event_json_context = {
   graph_by_tid : (int, EventGraph.event_graph list) Hashtbl.t;
   channel_classes : Lang.channel_class_def list;
