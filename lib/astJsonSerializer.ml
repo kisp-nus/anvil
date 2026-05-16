@@ -6,7 +6,7 @@ open AstJsonSerializerHelpers
 let ast_major_version = 0 (* incr w/ breaking changes *)
 let ast_minor_version = 1 (* incr w/ non-breaking additions *)
 let ast_patch_version = 0 (* incr w/ non-breaking bug fixes *)
-let ast_wip_build = 1 (* incr w/ each build while in wip state; set to 0 when finalized *)
+let ast_wip_build = 2 (* incr w/ each build while in wip state; set to 0 when finalized *)
 
 let ast_json_schema_version_string =
   let wip_str = if ast_wip_build > 0 then Printf.sprintf "-wip.%d" ast_wip_build else "" in
@@ -726,14 +726,15 @@ let proc_def_body_maybe_extern_to_yojson (b: proc_def_body_maybe_extern) = match
   | Extern (mod_name, extern_body) -> proc_def_body_extern_to_yojson mod_name extern_body
 
 let proc_def_to_yojson (p: proc_def) =
-  kind "proc_def" [
-    ("name", str p.name);
-    ("args", list (ast_node_to_yojson endpoint_def_to_yojson) p.args);
-    ("body", proc_def_body_maybe_extern_to_yojson p.body);
-    ("params", list param_to_yojson p.params);
-    ("span", code_span_to_yojson p.span);
-    ("file_name", opt str p.cunit_file_name);
-  ]
+  AstJsonSerializerEventSupport.with_process_event_json_context p.name (fun () ->
+    kind "proc_def" [
+      ("name", str p.name);
+      ("args", list (ast_node_to_yojson endpoint_def_to_yojson) p.args);
+      ("body", proc_def_body_maybe_extern_to_yojson p.body);
+      ("params", list param_to_yojson p.params);
+      ("span", code_span_to_yojson p.span);
+      ("file_name", opt str p.cunit_file_name);
+    ])
 
 let import_directive_to_yojson (i: import_directive) =
   kind "import_directive" [

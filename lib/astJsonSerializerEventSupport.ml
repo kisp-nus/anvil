@@ -18,16 +18,6 @@ representations of event data to the JSON AST, without any logic implemented out
 
  *)
 
-type event_json_context = {
-  graph_by_tid : (int, EventGraph.event_graph list) Hashtbl.t;
-  channel_classes : Lang.channel_class_def list;
-  symbolic_counters : (string, int) Hashtbl.t;
-  or_symbols_by_key : (string, string) Hashtbl.t;
-  max_symbols_by_key : (string, string) Hashtbl.t;
-}
-
-let current_event_json_context : event_json_context option ref = ref None
-
 type cycle_time_sum_term =
   | CycleConstTime of int
   | CycleUnknownTime of string
@@ -35,6 +25,31 @@ type cycle_time_sum_term =
   | CycleMaxTime of string * cycle_time_sum list
 
 and cycle_time_sum = cycle_time_sum_term list
+
+type event_expr_def =
+  | EventExprOr of cycle_time_sum list
+  | EventExprMax of cycle_time_sum list
+
+type process_event_json_context = {
+  symbolic_counters : (string, int) Hashtbl.t;
+  or_symbols_by_key : (string, string) Hashtbl.t;
+  max_symbols_by_key : (string, string) Hashtbl.t;
+  event_exprs_by_sym : (string, event_expr_def) Hashtbl.t;
+}
+
+type event_json_context = {
+  graph_by_tid : (int, EventGraph.event_graph list) Hashtbl.t;
+  channel_classes : Lang.channel_class_def list;
+  process_contexts : (Lang.identifier, process_event_json_context) Hashtbl.t;
+}
+
+let current_event_json_context : event_json_context option ref = ref None
+let current_process_event_json_context : process_event_json_context option ref = ref None
+
+let current_process_ctx () =
+  match !current_process_event_json_context with
+  | Some ctx -> ctx
+  | None -> failwith "event JSON serialization used without process context"
 
 (** Canonical ordering used for stable comparisons and symbol interning.
 
@@ -59,7 +74,7 @@ let rec sort_cycle_time_sum (terms : cycle_time_sum) : cycle_time_sum =
        | term -> term)
 
 (** Allocate the next symbol for a given prefix (e.g., `or`, `max`, ...). *)
-let fresh_symbolic_var (ctx : event_json_context) prefix =
+let fresh_symbolic_var (ctx : process_event_json_context) prefix =
   let n = Hashtbl.find_opt ctx.symbolic_counters prefix |> Option.value ~default:0 in
   Hashtbl.replace ctx.symbolic_counters prefix (n + 1);
   Printf.sprintf "%s%d" prefix n
@@ -71,7 +86,7 @@ let fresh_symbolic_var (ctx : event_json_context) prefix =
 
     This is standard structural interning: symbol identity follows the canonical
     expression key rather than the traversal path that discovered the expression. *)
-let intern_symbol (ctx : event_json_context) prefix key tbl =
+let intern_symbol (ctx : process_event_json_context) prefix key tbl =
   match Hashtbl.find_opt tbl key with
   | Some sym -> sym
   | None ->
@@ -361,11 +376,13 @@ let or_cycle_time_sum (sym : string) (sums : cycle_time_sum list) : cycle_time_s
 
 (** Construct an `Or` wrapper and intern its symbol by structural key.
     This means if an existing or expression already exists, its symbol is reused. *)
-let interned_or_cycle_time_sum (ctx : event_json_context) (sums : cycle_time_sum list) : cycle_time_sum =
+let interned_or_cycle_time_sum (ctx : process_event_json_context) (sums : cycle_time_sum list) : cycle_time_sum =
   or_cycle_time_sum_with
     (fun merged_sums ->
       let key = Printf.sprintf "or:[%s]" (List.map cycle_time_sum_key merged_sums |> List.sort String.compare |> String.concat ",") in
-      intern_symbol ctx "or" key ctx.or_symbols_by_key)
+      let sym = intern_symbol ctx "or" key ctx.or_symbols_by_key in
+      if not (Hashtbl.mem ctx.event_exprs_by_sym sym) then Hashtbl.add ctx.event_exprs_by_sym sym (EventExprOr merged_sums);
+      sym)
     sums
 
 (** Conservative dominance merge for two `Max` branches.
@@ -491,11 +508,13 @@ let max_cycle_time_sum (sym : string) (max_terms : cycle_time_sum list) : cycle_
 
 (** Construct a `Max` wrapper and intern its symbol by structural key.
     This means if an existing or expression already exists, its symbol is reused. *)
-let interned_max_cycle_time_sum (ctx : event_json_context) (max_terms : cycle_time_sum list) : cycle_time_sum =
+let interned_max_cycle_time_sum (ctx : process_event_json_context) (max_terms : cycle_time_sum list) : cycle_time_sum =
   max_cycle_time_sum_with
     (fun merged_terms ->
       let key = Printf.sprintf "max:[%s]" (List.map cycle_time_sum_key merged_terms |> List.sort String.compare |> String.concat ",") in
-      intern_symbol ctx "max" key ctx.max_symbols_by_key)
+      let sym = intern_symbol ctx "max" key ctx.max_symbols_by_key in
+      if not (Hashtbl.mem ctx.event_exprs_by_sym sym) then Hashtbl.add ctx.event_exprs_by_sym sym (EventExprMax merged_terms);
+      sym)
     max_terms
 
 (** Add one cycle-time sum on top of another.
@@ -540,7 +559,8 @@ let atomic_delay_to_cycle_time_sum (tid : int) (from_ev : EventGraph.event) (to_
     Branches are combined with interned `Or` terms and `Later` joins with interned
     `Max` terms so equivalent relative-delay expressions discovered from different
     origins/traversals can still share symbols inside one serialization context. *)
-let rel_delays_from_event (ctx : event_json_context) (graph : EventGraph.event_graph) (origin : EventGraph.event) : (int, cycle_time_sum) Hashtbl.t =
+let rel_delays_from_event (_ctx : event_json_context) (graph : EventGraph.event_graph) (origin : EventGraph.event) : (int, cycle_time_sum) Hashtbl.t =
+  let proc_ctx = current_process_ctx () in
   let max_eid = List.fold_left (fun n (e : EventGraph.event) -> max n e.id) 0 graph.events in
   let dist : cycle_time_sum option array = Array.make (max_eid + 1) None in
   let set_dist (ev : EventGraph.event) d = if ev.id >= 0 && ev.id <= max_eid then dist.(ev.id) <- Some d in
@@ -561,7 +581,7 @@ let rel_delays_from_event (ctx : event_json_context) (graph : EventGraph.event_g
               Option.map (fun d0 -> extend_cycle_time_sums (atomic_delay_to_cycle_time_sum graph.thread_id e0 ev ad) d0) (get_dist e0)
           | `Later (e1, e2) -> (
               match get_dist e1, get_dist e2 with
-              | Some d1, Some d2 -> Some (interned_max_cycle_time_sum ctx [d1; d2])
+              | Some d1, Some d2 -> Some (interned_max_cycle_time_sum proc_ctx [d1; d2])
               | _ -> None)
           | `Branch (_, { branches_val; _ }) ->
               let ds = List.filter_map get_dist branches_val in
@@ -569,10 +589,10 @@ let rel_delays_from_event (ctx : event_json_context) (graph : EventGraph.event_g
               | [] -> None
               | [d] -> Some d
                | _ ->
-                   let unique_ds =
-                     List.fold_left (fun acc d -> if List.exists (equal_cycle_time_sums d) acc then acc else d :: acc) [] ds
-                   in
-                   Some (interned_or_cycle_time_sum ctx unique_ds))
+                    let unique_ds =
+                      List.fold_left (fun acc d -> if List.exists (equal_cycle_time_sums d) acc then acc else d :: acc) [] ds
+                    in
+                    Some (interned_or_cycle_time_sum proc_ctx unique_ds))
         in
         match d with Some d' -> set_dist ev d' | None -> ())
     events_topo;
@@ -610,6 +630,7 @@ let rel_delays_from_event (ctx : event_json_context) (graph : EventGraph.event_g
     base event to the recurse event with the delay from the root event to a matching
     message in the next iteration. *)
 let sustain_lifetime_for_msg (ctx : event_json_context) (tid : int) (base_eid : int) (msg_spec : message_specifier) : cycle_time_sum option =
+  let proc_ctx = current_process_ctx () in
   let graphs = Hashtbl.find_opt ctx.graph_by_tid tid |> Option.value ~default:[] in
   let lookup_message_allow_foreign (graph : EventGraph.event_graph) (spec : message_specifier) =
     let ( let* ) = Option.bind in
@@ -664,7 +685,7 @@ let sustain_lifetime_for_msg (ctx : event_json_context) (tid : int) (base_eid : 
                     match sums with
                     | [] -> None
                     | [single] -> Some single
-                    | _ -> Some (interned_or_cycle_time_sum ctx sums)
+                    | _ -> Some (interned_or_cycle_time_sum proc_ctx sums)
                   in
                   (match direct_sustain with
                   | Some _ -> direct_sustain
@@ -687,7 +708,7 @@ let sustain_lifetime_for_msg (ctx : event_json_context) (tid : int) (base_eid : 
                           (match loop_sums with
                           | [] -> None
                           | [single] -> Some single
-                          | _ -> Some (interned_or_cycle_time_sum ctx loop_sums))
+                          | _ -> Some (interned_or_cycle_time_sum proc_ctx loop_sums))
                       | _ -> None))
               | `Message_with_offset (_msg, _off, false) -> None
             in
@@ -709,14 +730,25 @@ let sustain_lifetime_of_expr_event (expr : expr) (tid : int) (eid : int) : cycle
       | _ -> None)
   | None -> None
 
-let rec symbolic_sum_to_yojson (terms : cycle_time_sum) : Yojson.Safe.t =
+let symbolic_sum_to_yojson (terms : cycle_time_sum) : Yojson.Safe.t =
   list_rev
     (function
       | CycleConstTime n -> assoc [("const", int n)]
       | CycleUnknownTime sym -> assoc [("sym", str sym)]
-      | CycleOrTime (sym, sums) -> assoc [("sym", str sym); ("or", list symbolic_sum_to_yojson sums)]
-      | CycleMaxTime (sym, max_terms) -> assoc [("sym", str sym); ("max", list symbolic_sum_to_yojson max_terms)])
+      | CycleOrTime (sym, _sums) -> assoc [("sym", str sym)]
+      | CycleMaxTime (sym, _max_terms) -> assoc [("sym", str sym)])
     (normalize_cycle_time_sum terms)
+
+let event_exprs_to_yojson (ctx : process_event_json_context) : Yojson.Safe.t =
+  let event_expr_def_to_yojson = function
+    | EventExprOr sums -> assoc [("type", str "or"); ("value", list symbolic_sum_to_yojson sums)]
+    | EventExprMax sums -> assoc [("type", str "max"); ("value", list symbolic_sum_to_yojson sums)]
+  in
+  Hashtbl.to_seq_keys ctx.event_exprs_by_sym
+  |> List.of_seq
+  |> List.sort String.compare
+  |> List.map (fun sym -> (sym, event_expr_def_to_yojson (Hashtbl.find ctx.event_exprs_by_sym sym)))
+  |> assoc
 
 let ast_node_event_to_yojson = function
   | Some (tid, eid, delay_to_exec) ->
@@ -745,7 +777,7 @@ let expr_node_event_to_yojson (expr : expr) = function
   | None -> `Null
 
 let event_graph_collection_to_yojson (gc : EventGraph.event_graph_collection) : Yojson.Safe.t list =
-  let ctx =
+  let global_ctx =
     match !current_event_json_context with
     | Some ctx -> ctx
     | None -> failwith "event_graph_collection_to_yojson called without event JSON context"
@@ -771,14 +803,16 @@ let event_graph_collection_to_yojson (gc : EventGraph.event_graph_collection) : 
                   match AstAnnotator.lookup_seq_delay_symbol tid e0.id ev.id with
                   | Some sym -> extend_cycle_time_sums [CycleUnknownTime sym] sum
                   | None -> sum))
-          | `Later (e1, e2) ->
-              let e1_delays = compute_delays e1 in
-              let e2_delays = compute_delays e2 in
-              interned_max_cycle_time_sum ctx [e1_delays; e2_delays]
-          | `Branch (_, branch_info) ->
-              let other_delays = List.map (fun (oe : EventGraph.event) -> compute_delays oe) branch_info.branches_val in
-              let unique_other_delays =
-                List.fold_left (fun acc d -> if List.exists (equal_cycle_time_sums d) acc then acc else d :: acc) [] other_delays
+              | `Later (e1, e2) ->
+                  let ctx = current_process_ctx () in
+                  let e1_delays = compute_delays e1 in
+                  let e2_delays = compute_delays e2 in
+                  interned_max_cycle_time_sum ctx [e1_delays; e2_delays]
+              | `Branch (_, branch_info) ->
+                  let ctx = current_process_ctx () in
+                  let other_delays = List.map (fun (oe : EventGraph.event) -> compute_delays oe) branch_info.branches_val in
+                  let unique_other_delays =
+                    List.fold_left (fun acc d -> if List.exists (equal_cycle_time_sums d) acc then acc else d :: acc) [] other_delays
               in
               interned_or_cycle_time_sum ctx unique_other_delays
         in
@@ -803,18 +837,34 @@ let event_graph_collection_to_yojson (gc : EventGraph.event_graph_collection) : 
   in
 
   let proc_graph_to_order (p : EventGraph.proc_graph) =
-    let thread_orders = List.map (fun (e, _) -> event_graph_to_order e) p.threads in
-    assoc [("proc_name", str p.name); ("threads", list (fun t -> t) thread_orders)]
+    let proc_ctx = Hashtbl.find global_ctx.process_contexts p.name in
+    let prev_proc_ctx = !current_process_event_json_context in
+    current_process_event_json_context := Some proc_ctx;
+    Fun.protect
+      (fun () ->
+        let thread_orders = List.map (fun (e, _) -> event_graph_to_order e) p.threads in
+        assoc [("proc_name", str p.name); ("event_exprs", event_exprs_to_yojson proc_ctx); ("threads", list (fun t -> t) thread_orders)])
+      ~finally:(fun () -> current_process_event_json_context := prev_proc_ctx)
   in
 
   List.map proc_graph_to_order gc.event_graphs
 
+let build_process_context () =
+  {
+    symbolic_counters = Hashtbl.create 4;
+    or_symbols_by_key = Hashtbl.create 32;
+    max_symbols_by_key = Hashtbl.create 32;
+    event_exprs_by_sym = Hashtbl.create 32;
+  }
+
 let build_event_json_context channel_classes (gcl : EventGraph.event_graph_collection list) =
   let graph_by_tid = Hashtbl.create 16 in
+  let process_contexts = Hashtbl.create 16 in
   List.iter
     (fun (gcol : EventGraph.event_graph_collection) ->
       List.iter
         (fun (pg : EventGraph.proc_graph) ->
+          if not (Hashtbl.mem process_contexts pg.name) then Hashtbl.add process_contexts pg.name (build_process_context ());
           List.iter
             (fun ((g : EventGraph.event_graph), _rst) ->
               let current = Hashtbl.find_opt graph_by_tid g.thread_id |> Option.value ~default:[] in
@@ -825,12 +875,30 @@ let build_event_json_context channel_classes (gcl : EventGraph.event_graph_colle
   {
     graph_by_tid;
     channel_classes;
-    symbolic_counters = Hashtbl.create 4;
-    or_symbols_by_key = Hashtbl.create 32;
-    max_symbols_by_key = Hashtbl.create 32;
+    process_contexts;
   }
+
+let with_process_event_json_context proc_name f =
+  match !current_event_json_context with
+  | None -> f ()
+  | Some ctx ->
+      let proc_ctx =
+        match Hashtbl.find_opt ctx.process_contexts proc_name with
+        | Some proc_ctx -> proc_ctx
+        | None ->
+            let proc_ctx = build_process_context () in
+            Hashtbl.add ctx.process_contexts proc_name proc_ctx;
+            proc_ctx
+      in
+      let prev_proc_ctx = !current_process_event_json_context in
+      current_process_event_json_context := Some proc_ctx;
+      Fun.protect f ~finally:(fun () -> current_process_event_json_context := prev_proc_ctx)
 
 let with_event_json_context channel_classes gcl f =
   let prev_ctx = !current_event_json_context in
+  let prev_proc_ctx = !current_process_event_json_context in
   current_event_json_context := Some (build_event_json_context channel_classes gcl);
-  Fun.protect f ~finally:(fun () -> current_event_json_context := prev_ctx)
+  current_process_event_json_context := None;
+  Fun.protect f ~finally:(fun () ->
+      current_process_event_json_context := prev_proc_ctx;
+      current_event_json_context := prev_ctx)
