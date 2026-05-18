@@ -124,11 +124,11 @@ cunit:
 import_directive:
 | KEYWORD_IMPORT; file_name = STR_LITERAL
   {
-    let open Lang in {file_name; is_extern = false}
+    let open Lang in {file_name; is_extern = false; span = {st = $startpos; ed = $endpos}}
   }
 | KEYWORD_EXTERN; KEYWORD_IMPORT; file_name = STR_LITERAL
   {
-    let open Lang in {file_name; is_extern = true}
+    let open Lang in {file_name; is_extern = true; span = {st = $startpos; ed = $endpos}}
   }
 ;
 
@@ -142,6 +142,8 @@ proc_def:
       name = ident;
       args = args;
       params = [];
+      span = {st = $startpos; ed = $endpos};
+      cunit_file_name = None;
       body = let open Lang in Native body
     } : Lang.proc_def
   }
@@ -153,6 +155,8 @@ proc_def:
       name = ident;
       args = args;
       params = params;
+      span = {st = $startpos; ed = $endpos};
+      cunit_file_name = None;
       body = let open Lang in Native body
     } : Lang.proc_def
   }
@@ -164,6 +168,8 @@ proc_def:
       name = ident;
       args = args;
       params = [];
+      span = {st = $startpos; ed = $endpos};
+      cunit_file_name = None;
       body = let open Lang in Extern (mod_name, body)
     } : Lang.proc_def
   }
@@ -225,11 +231,11 @@ proc_def_body_extern:
 param_def:
 | name = IDENT; COLON; KEYWORD_INT
   {
-    let open Lang in {param_name = name; param_ty = IntParam}
+    let open Lang in {param_name = name; param_ty = IntParam; span = {st = $startpos; ed = $endpos} }
   }
 | name = IDENT; COLON; KEYWORD_TYPE
   {
-    let open Lang in {param_name = name; param_ty = TypeParam}
+    let open Lang in {param_name = name; param_ty = TypeParam; span = {st = $startpos; ed = $endpos} }
   }
 ;
 
@@ -243,22 +249,22 @@ type_def:
 | KEYWORD_TYPE; name = IDENT; params = param_list?;
   EQUAL; dtype = data_type; SEMICOLON
   {
-    { name = name; body = dtype; params = Option.value ~default:[] params } : Lang.type_def
+    { name = name; body = dtype; params = Option.value ~default:[] params; span = {st = $startpos; ed = $endpos}; cunit_file_name = None } : Lang.type_def
   }
 | KEYWORD_ENUM; name = IDENT; params = param_list?;
-  LEFT_BRACE; variants = separated_nonempty_list(COMMA, variant_def); RIGHT_BRACE
+  LEFT_BRACE; variants = separated_nonempty_list(COMMA, node(variant_def)); RIGHT_BRACE
   {
-    { name = name; body = `Variant (None,variants); params = Option.value ~default:[] params } : Lang.type_def
+    { name = name; body = `Variant (None,variants); params = Option.value ~default:[] params; span = {st = $startpos; ed = $endpos}; cunit_file_name = None } : Lang.type_def
   }
 | KEYWORD_ENUM; name = IDENT; dtype = data_type; params = param_list?;
-  LEFT_BRACE; variants = separated_nonempty_list(COMMA, variant_def); RIGHT_BRACE
+  LEFT_BRACE; variants = separated_nonempty_list(COMMA, node(variant_def)); RIGHT_BRACE
   {
-    { name = name; body = `Variant (Some dtype, variants); params = Option.value ~default:[] params } : Lang.type_def
+    { name = name; body = `Variant (Some dtype, variants); params = Option.value ~default:[] params; span = {st = $startpos; ed = $endpos}; cunit_file_name = None } : Lang.type_def
   }
 | KEYWORD_STRUCT; name = IDENT; params = param_list?;
-  LEFT_BRACE; fields = separated_nonempty_list(COMMA, field_def); RIGHT_BRACE
+  LEFT_BRACE; fields = separated_nonempty_list(COMMA, node(field_def)); RIGHT_BRACE
   {
-    { name = name; body = `Record (List.rev fields); params = Option.value ~default:[] params } : Lang.type_def
+    { name = name; body = `Record (List.rev fields); params = Option.value ~default:[] params; span = {st = $startpos; ed = $endpos}; cunit_file_name = None } : Lang.type_def
   }
 ;
 
@@ -301,7 +307,8 @@ channel_class_def:
       name = ident;
       messages = messages;
       params = [];
-      span = {st = $startpos; ed = $endpos}
+      span = {st = $startpos; ed = $endpos};
+      cunit_file_name = None;
     } : Lang.channel_class_def
   }
 | KEYWORD_CHAN; ident = IDENT; LEFT_ABRACK; params = separated_list(COMMA, param_def); RIGHT_ABRACK;
@@ -311,7 +318,8 @@ channel_class_def:
       name = ident;
       messages = messages;
       params = params;
-      span = {st = $startpos; ed = $endpos}
+      span = {st = $startpos; ed = $endpos};
+      cunit_file_name = None;
     } : Lang.channel_class_def
   }
 ;
@@ -333,6 +341,8 @@ proc_def_arg:
                         Instead we just look at which endpoints are used in spawn *)
       opp = None;
       num_instances = None;
+
+      span = {st = $startpos; ed = $endpos};
     } : Lang.endpoint_def
   }
 | foreign = foreign_tag; ident = IDENT; n = array_dimm; COLON; chan_dir = channel_direction; chan_class = channel_class_concrete
@@ -346,6 +356,8 @@ proc_def_arg:
                         Instead we just look at which endpoints are used in spawn *)
       opp = None;
       num_instances = Some n;
+
+      span = {st = $startpos; ed = $endpos};
     } : Lang.endpoint_def
   }
 ;
@@ -554,7 +566,7 @@ expr:
   { Lang.Cycle n }
 | e = node(expr); LEFT_BRACKET; ind = index; RIGHT_BRACKET
   { Lang.Index (e, ind) }
-| e = node(expr); PERIOD; fieldname = IDENT
+| e = node(expr); PERIOD; fieldname = node(IDENT)
   { Lang.Indirect (e, fieldname) }
 | SHARP; LEFT_BRACE; components = separated_list(COMMA, node(expr)); RIGHT_BRACE
   { Lang.Concat (components, false) }
@@ -572,11 +584,11 @@ expr:
   { Lang.Construct (constructor_spec, e) }
 | record_name = IDENT; DOUBLE_COLON; LEFT_BRACE;
   base = node(expr); KEYWORD_WITH;
-  record_fields = separated_nonempty_list(SEMICOLON, record_field_constr);
+  record_fields = separated_nonempty_list(SEMICOLON, node(record_field_constr));
   RIGHT_BRACE
   { Lang.Record (record_name, record_fields, Some base) }
 | record_name = IDENT; DOUBLE_COLON; LEFT_BRACE;
-  record_fields = separated_nonempty_list(SEMICOLON, record_field_constr);
+  record_fields = separated_nonempty_list(SEMICOLON, node(record_field_constr));
   RIGHT_BRACE
   { Lang.Record (record_name, record_fields, None) }
   (* debug operations *)
@@ -621,7 +633,7 @@ else_branch:
 ;
 
 constructor_spec:
-  ty = IDENT; DOUBLE_COLON; variant = IDENT
+  ty = IDENT; DOUBLE_COLON; variant = node(IDENT)
   { let open Lang in {variant_ty_name = ty; variant} }
 ;
 %inline record_field_constr:
@@ -700,7 +712,7 @@ un_expr:
 lvalue:
 | regname = IDENT
   { Lang.Reg regname }
-| lval = lvalue; PERIOD; fieldname = IDENT
+| lval = lvalue; PERIOD; fieldname = node(IDENT)
   { Lang.Indirected (lval, fieldname) }
 | lval = lvalue; LEFT_BRACKET; ind = index; RIGHT_BRACKET
   { Lang.Indexed (lval, ind) }
@@ -753,7 +765,8 @@ message_def:
       send_sync = send_sync_mode;
       recv_sync = recv_sync_mode;
       sig_types = data;
-      span = {st = $startpos; ed = $endpos}
+      span = {st = $startpos; ed = $endpos};
+      cunit_file_name = None;
     } : Lang.message_def
   }
 ;
@@ -944,23 +957,23 @@ shared_var_def:
 macro_def:
   | KEYWORD_CONST; id = IDENT; EQUAL; value = INT; SEMICOLON
     {
-      { id = id; value = value } : Lang.macro_def
+      { id = id; value = value; span = {st = $startpos; ed = $endpos}; cunit_file_name = None } : Lang.macro_def
     }
 ;
 
 function_def:
   | KEYWORD_FUNCTION; name = IDENT; LEFT_PAREN; args = separated_list(COMMA, typed_arg); RIGHT_PAREN; LEFT_BRACE; body = node(expr); RIGHT_BRACE
     {
-      { name = name; args = args; body = body } : Lang.func_def
+      { name = name; args = args; body = body; span = {st = $startpos; ed = $endpos}; cunit_file_name = None} : Lang.func_def
     }
 ;
 
 typed_arg:
   | name = IDENT; COLON; dtype = data_type
     {
-      { arg_name = name; arg_type = Some dtype } : Lang.typed_arg
+      { arg_name = name; arg_type = Some dtype; span = {st = $startpos; ed = $endpos} } : Lang.typed_arg
     }
   | name = IDENT
     {
-      { arg_name = name; arg_type = None } : Lang.typed_arg
+      { arg_name = name; arg_type = None; span = {st = $startpos; ed = $endpos} } : Lang.typed_arg
     }

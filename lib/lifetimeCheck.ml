@@ -1,8 +1,10 @@
 open Lang
 open EventGraph
 open GraphAnalysis
+open ErrorCollector
 
-let string_of_lt (lt : lifetime) : string =
+(* Lifetime formatted string for debugging *)
+let _string_of_lt (lt : lifetime) : string =
   String.concat "" (List.map (fun s ->
       Printf.sprintf "%d |> %s | " (fst s).id (string_of_delay_pat (snd s))
     ) lt.dead)
@@ -33,9 +35,9 @@ let check_linear (config : Config.compile_config) lookup_message (g : event_grap
         | PutShared (_, _, _td) ->
           ()
         | ImmediateRecv msg ->
-          add_msg msg ev ({d = {ty = Recv msg; until = ev}; span = ac_span.span})
+          add_msg msg ev ({d = {ty = Recv msg; until = ev}; def_span = ac_span.def_span; action_event = ac_span.action_event; span = ac_span.span})
         | ImmediateSend (msg, td) ->
-          add_msg msg ev ({d = {ty = Send (msg, td); until = ev}; span = ac_span.span})
+          add_msg msg ev ({d = {ty = Send (msg, td); until = ev}; def_span = ac_span.def_span; action_event = ac_span.action_event; span = ac_span.span})
           (* add_reg_ops_td ev td *)
       ) ev.actions;
       List.iter (fun sa_span ->
@@ -130,8 +132,8 @@ let event_pat_rel2 events lookup_message ev_pat1 ev_pat2 =
       | true -> (g, offset)
 
       | false -> match ((lookup_message m): message_def option) with
-        | Some def -> raise (LifetimeCheckError [Text "Negative Offset Unsupported right now"; Except.codespan_local def.span])
-        | None -> raise (LifetimeCheckError [Text (Printf.sprintf "Message_def_not_found %s" (string_of_msg_spec m)); Except.codespan_local Lang.code_span_dummy])
+        | Some def -> raise_fatal (LifetimeCheckError [Text "Negative Offset Unsupported right now"; Except.codespan_local def.span])
+        | None -> raise_fatal (LifetimeCheckError [Text (Printf.sprintf "Message_def_not_found %s" (string_of_msg_spec m)); Except.codespan_local Lang.code_span_dummy])
   in
   match ev_pat1 with
   | [spat1] -> (
@@ -326,9 +328,8 @@ let lifetime_check (config : Config.compile_config) (ci : cunit_info) (g : event
       | [] -> ()
     );
     if lifetime_in_range g.events lookup_message lt td.lt |> not then
-      let err_msg = Printf.sprintf "Value does not live long enough in message send! (dies @ %s)" (string_of_lt lt) in
       raise (LifetimeCheckError [
-        Text err_msg;
+        Text "Value does not live long enough in send!";
         Except.codespan_local span
       ])
   in
@@ -370,7 +371,7 @@ let lifetime_check (config : Config.compile_config) (ci : cunit_info) (g : event
           if lifetime_in_range g.events lookup_message (EventGraphOps.lifetime_immediate ev) td.lt |> not then
             raise (LifetimeCheckError
               [
-                Text (Printf.sprintf "Value does not live long enough in debug print! [Event Id = %d] : %s" ev.id (string_of_lt td.lt));
+                Text "Value does not live long enough in debug print!";
                 Except.codespan_local a.span
               ])
           else ()
@@ -473,11 +474,11 @@ let lifetime_check (config : Config.compile_config) (ci : cunit_info) (g : event
         match ac_span.d with
         | ImmediateSend (msg', td) ->
           if (msg_ident msg') = msg then
-            Some {d = {until = ev; ty = Send (msg', td)}; span = ac_span.span }
+            Some {d = {until = ev; ty = Send (msg', td)}; def_span = ac_span.def_span; action_event = ac_span.action_event; span = ac_span.span }
           else None
         | ImmediateRecv msg' ->
           if (msg_ident msg') = msg then
-            Some {d = {until = ev; ty = Recv msg'}; span = ac_span.span }
+            Some {d = {until = ev; ty = Recv msg'}; def_span = ac_span.def_span; action_event = ac_span.action_event; span = ac_span.span }
           else None
         | _ -> None
       ) ev.actions in
@@ -542,7 +543,8 @@ let lifetime_check (config : Config.compile_config) (ci : cunit_info) (g : event
         ) g.events;
         let min_weights = GraphAnalysis.event_min_among_succ g.events slacks in
         if min_weights.(ev_root.id) > init_offset && not is_one_cycle_static_1_1 then
-          let error_msg = Printf.sprintf "Static sync mode mismatch (actual init offset = %d > expected init offset %d)!"
+          let error_msg = Printf.sprintf "Static sync mode mismatch for initial offset of %s (actual init offset = %d > expected init offset %d)!"
+            relative_msg
             min_weights.(ev_root.id) init_offset
           in
           raise (LifetimeCheckError [Text error_msg]) (* TODO: better error message *)
@@ -593,7 +595,8 @@ let lifetime_check (config : Config.compile_config) (ci : cunit_info) (g : event
             let maxv = GraphAnalysis.event_predecessors ev |> List.map (fun ev' -> slacks.(ev'.id))
               |> List.fold_left Int.max (-event_distance_max) in
             if maxv > -gap then
-              let error_msg = Printf.sprintf "Static sync mode mismatch (actual gap = %d < expected gap %d)!"
+              let error_msg = Printf.sprintf "Static sync mode mismatch between %s and %s (actual gap = %d < expected gap %d)!"
+                relative_msg msg
                 (-maxv) gap
               in
               raise (LifetimeCheckError [Text error_msg; Except.codespan_local sa.span])
