@@ -777,8 +777,13 @@ let compilation_unit_with_supplementary_data_to_yojson (c: compilation_unit) (sd
 
 let compilation_unit_with_event_graph_to_yojson (c: compilation_unit) (gcl: EventGraph.event_graph_collection list) =
   AstJsonSerializerEventSupport.with_event_json_context c.channel_classes gcl (fun () ->
+    let ast_json = compilation_unit_with_supplementary_data_to_yojson c [] in
     let event_graphs = List.map AstJsonSerializerEventSupport.event_graph_collection_to_yojson gcl |> List.concat in
-    compilation_unit_with_supplementary_data_to_yojson c [("event_graphs", `List event_graphs)]
+    match ast_json with
+    | `Assoc fields -> `Assoc (fields @ [("event_graphs", `List event_graphs)])
+    | _ ->
+        Printf.eprintf "[Warning] compilation_unit JSON serialization did not produce an object; omitting event_graphs\n";
+        ast_json
   )
 
 let compilation_unit_to_yojson (c: compilation_unit) =
