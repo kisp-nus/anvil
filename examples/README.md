@@ -51,8 +51,9 @@ Below is a categorized list of the available examples, along with brief descript
 | [subreg_var](subreg_var.anvil)                         | Sub-register / bit-slice borrowing with variable indices |
 | [test_in](test_in.anvil)                               | `in` construct                                           |
 | [test_match_endpoint](test_match_endpoint.anvil)       | State machine encoding using `match` and `func`          |
+| [test_shift](test_shift.anvil)                         | Bitwise shift operators (`shl`, `shr`)                   |
 
-> **Total:** 16 examples
+> **Total:** 17 examples
 
 ---
 
@@ -166,4 +167,4 @@ Keeping this README up to date helps maintain clarity and usability for future u
 
 ---
 
-> **Current Example Count:** 50
+> **Current Example Count:** 51

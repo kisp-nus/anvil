@@ -259,7 +259,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
           if td1.ld.lt.live.id <> ctx.current.id && not binding.binding_used then (
             (* raise (event_graph_error_default "Value is potentially not awaited!" e1.span) *)
             Printf.eprintf "[Warning] Value bound to %s is potentially not awaited!\n" ident;
-            (SpanPrinter.print_code_span ~indent:2 ~trunc:(-5) stderr ci.file_name e1.span)
+            (SpanPrinter.print_code_span ~indent:2 ~trunc:(-5) stderr e1.span)
           ;
           );
           td
@@ -372,7 +372,6 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
   | TrySend (send_pack, e1, e2) ->
     (* data to send *)
     let td_send_data = construct_graphIR graph ci ctx send_pack.send_data in
-
     let wires, w_cond = WireCollection.add_msg_ack_port graph.thread_id ci.typedefs send_pack.send_msg_spec graph.wires in
     let td_cond = {
       w = Some w_cond;
@@ -381,6 +380,14 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
       dtype = `Logic;
     } in
     graph.wires <- wires;
+    let msg = MessageCollection.lookup_message graph.messages send_pack.send_msg_spec ci.channel_classes
+      |> unwrap_or_err "Invalid message specifier in try send" e.span in
+    if msg.dir <> Out then (
+      raise (event_graph_error_default "Mismatching message direction!" e.span)
+    );
+    let dtype = msg.sig_types |> List.hd |> (fun stype -> stype.dtype) in
+    let err_string = DTypeCheck.fmt_send msg.name dtype td_send_data.ld.dtype in
+    check_dtype err_string (Some dtype) td_send_data.ld.dtype e.span ci.file_name ci.weak_typecasts ci.typedefs ci.macro_defs;
 
     (* TODO: dedup *)
     let branch_info = {

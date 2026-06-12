@@ -1,0 +1,6 @@
+import "bad_syntax.anvil"
+proc top(){
+    loop {
+        cycle 1
+    }
+}
