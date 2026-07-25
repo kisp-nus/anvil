@@ -543,14 +543,14 @@ let cycle_time_sum_of_exec_delay (delay : Lang.exec_delay) : cycle_time_sum =
 
 (** Convert a single event-graph edge delay into a cycle-time sum.
 
-    Message/sync edges reuse the symbolic delay names attached earlier by
-    `AstAnnotator`, so later structural interning can see consistent leaf symbols. *)
-let atomic_delay_to_cycle_time_sum (tid : int) (from_ev : EventGraph.event) (to_ev : EventGraph.event)
+    Message/sync edges reuse the symbolic delay names attached to their destination
+    events by `AstAnnotator`, so later structural interning sees consistent leaves. *)
+let atomic_delay_to_cycle_time_sum (to_ev : EventGraph.event)
     (ad : EventGraph.atomic_delay) : cycle_time_sum =
   match ad with
   | `Cycles c -> add_const_to_cycle_time_sum c []
   | `Send _ | `Recv _ | `Sync _ ->
-      (match AstAnnotator.lookup_seq_delay_symbol tid from_ev.id to_ev.id with
+      (match to_ev.seq_delay_symbol with
       | Some sym -> [CycleUnknownTime sym]
       | None -> [])
 
@@ -578,7 +578,7 @@ let rel_delays_from_event (_ctx : event_json_context) (graph : EventGraph.event_
           | `Root None -> None
           | `Root (Some (e0, _)) -> get_dist e0
           | `Seq (e0, ad) ->
-              Option.map (fun d0 -> extend_cycle_time_sums (atomic_delay_to_cycle_time_sum graph.thread_id e0 ev ad) d0) (get_dist e0)
+              Option.map (fun d0 -> extend_cycle_time_sums (atomic_delay_to_cycle_time_sum ev ad) d0) (get_dist e0)
           | `Later (e1, e2) -> (
               match get_dist e1, get_dist e2 with
               | Some d1, Some d2 -> Some (interned_max_cycle_time_sum proc_ctx [d1; d2])
@@ -809,7 +809,6 @@ let event_graph_collection_to_yojson (gc : EventGraph.event_graph_collection) : 
 
   let event_graph_to_order (t : EventGraph.event_graph) =
     let events = t.events in
-    let tid = t.thread_id in
 
     let delays_memo : (int, cycle_time_sum) Hashtbl.t = Hashtbl.create (5 * List.length events) in
     let rec compute_delays (ev : EventGraph.event) : cycle_time_sum =
@@ -824,7 +823,7 @@ let event_graph_collection_to_yojson (gc : EventGraph.event_graph_collection) : 
               (match atomic_delay with
               | `Cycles c -> add_const_to_cycle_time_sum c sum
               | `Send _ | `Recv _ | `Sync _ -> (
-                  match AstAnnotator.lookup_seq_delay_symbol tid e0.id ev.id with
+                  match ev.seq_delay_symbol with
                   | Some sym -> extend_cycle_time_sums [CycleUnknownTime sym] sum
                   | None -> sum))
               | `Later (e1, e2) ->

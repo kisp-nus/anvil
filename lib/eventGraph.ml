@@ -129,6 +129,7 @@ and event = {
   preds : Utils.int_set; (** set of predecessors, used for fast reachability query. Only used during the graph building process *)
   mutable removed : bool; (** is this event removed? (used in optimisation) *)
   mutable expr_nodes : Lang.expr_node list; (** the AST nodes associated with this event, used for syncing event annotations on the AST *)
+  mutable seq_delay_symbol : string option; (** symbolic delay for the incoming blocking sequence edge *)
 }
 
 and branch_cond =
@@ -216,4 +217,3 @@ exception EventGraphError of Except.error_message
 exception LifetimeCheckError of Except.error_message
 
 let event_graph_error_default text span = let open Except in EventGraphError [Text text; codespan_local span]
-

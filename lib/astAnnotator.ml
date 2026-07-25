@@ -2,21 +2,6 @@
 
 let enabled = ref false
 
-let delay_symbol_counter = ref 0
-let seq_delay_symbol_map : ((int * int * int), string) Hashtbl.t = Hashtbl.create 128
-
-let clear_delay_to_exec_annotations_cache () =
-  delay_symbol_counter := 0;
-  Hashtbl.clear seq_delay_symbol_map
-
-let fresh_symbolic_delay_var () =
-  let n = !delay_symbol_counter in
-  delay_symbol_counter := n + 1;
-  Printf.sprintf "n%d" n
-
-let lookup_seq_delay_symbol tid from_eid to_eid =
-  Hashtbl.find_opt seq_delay_symbol_map (tid, from_eid, to_eid)
-
 let annotate_delay_to_exec (gcol : EventGraph.event_graph_collection) =
   let update_nodes_for_seq_delay (thread_id : int) (start_eid : int) (delay : Lang.exec_delay) (nodes : Lang.expr_node list) =
     List.iter (fun (node : Lang.expr_node) ->
@@ -26,32 +11,32 @@ let annotate_delay_to_exec (gcol : EventGraph.event_graph_collection) =
       | _ -> ()
     ) nodes
   in
-  let annotate_event (lookup_message : Lang.message_specifier -> Lang.message_def option) (all_nodes : Lang.expr_node list) (ev : EventGraph.event) =
-    match ev.source with
-    | `Seq (start_ev, `Send msg_spec) ->
-      (match lookup_message msg_spec with
-      | Some msg when not (GraphAnalysis.message_is_immediate msg true) ->
-        let sym = fresh_symbolic_delay_var () in
-        let delay = [Lang.DelaySym sym] in
-        Hashtbl.replace seq_delay_symbol_map (ev.graph.thread_id, start_ev.id, ev.id) sym;
-        update_nodes_for_seq_delay ev.graph.thread_id start_ev.id delay all_nodes
-      | _ -> ())
-    | `Seq (start_ev, `Recv msg_spec) ->
-      (match lookup_message msg_spec with
-      | Some msg when not (GraphAnalysis.message_is_immediate msg false) ->
-        let sym = fresh_symbolic_delay_var () in
-        let delay = [Lang.DelaySym sym] in
-        Hashtbl.replace seq_delay_symbol_map (ev.graph.thread_id, start_ev.id, ev.id) sym;
-        update_nodes_for_seq_delay ev.graph.thread_id start_ev.id delay all_nodes
-      | _ -> ())
-    | `Seq (start_ev, `Sync _) ->
-      let sym = fresh_symbolic_delay_var () in
-      let delay = [Lang.DelaySym sym] in
-      Hashtbl.replace seq_delay_symbol_map (ev.graph.thread_id, start_ev.id, ev.id) sym;
-      update_nodes_for_seq_delay ev.graph.thread_id start_ev.id delay all_nodes
-    | _ -> ()
-  in
   List.iter (fun (pg : EventGraph.proc_graph) ->
+    let delay_symbol_counter = ref 0 in
+    let fresh_symbolic_delay_var () =
+      let n = !delay_symbol_counter in
+      delay_symbol_counter := n + 1;
+      Printf.sprintf "n%d" n
+    in
+    let annotate_event (lookup_message : Lang.message_specifier -> Lang.message_def option) (all_nodes : Lang.expr_node list) (ev : EventGraph.event) =
+      let annotate_seq_delay (start_ev : EventGraph.event) =
+        let sym = fresh_symbolic_delay_var () in
+        let delay = [Lang.DelaySym sym] in
+        ev.seq_delay_symbol <- Some sym;
+        update_nodes_for_seq_delay ev.graph.thread_id start_ev.id delay all_nodes
+      in
+      match ev.source with
+      | `Seq (start_ev, `Send msg_spec) ->
+        (match lookup_message msg_spec with
+        | Some msg when not (GraphAnalysis.message_is_immediate msg true) -> annotate_seq_delay start_ev
+        | _ -> ())
+      | `Seq (start_ev, `Recv msg_spec) ->
+        (match lookup_message msg_spec with
+        | Some msg when not (GraphAnalysis.message_is_immediate msg false) -> annotate_seq_delay start_ev
+        | _ -> ())
+      | `Seq (start_ev, `Sync _) -> annotate_seq_delay start_ev
+      | _ -> ()
+    in
     let lookup_message msg_spec = MessageCollection.lookup_message pg.messages msg_spec gcol.channel_classes in
     List.iter (fun ((g : EventGraph.event_graph), _) ->
       let all_nodes = List.concat_map (fun (ev : EventGraph.event) -> ev.expr_nodes) g.events in

@@ -128,7 +128,7 @@ module CombSimplPass = struct
     assert (Dynarray.length event_ufs = n);
     let add_event source =
       let new_ev = {actions = []; sustained_actions = []; source; id = graph.last_event_id + 1;
-        is_recurse = false; expr_nodes = [];
+        is_recurse = false; expr_nodes = []; seq_delay_symbol = None;
         outs = []; graph; preds = Utils.IntSet.empty; removed = false } in
       graph.last_event_id <- new_ev.id;
       graph.events <- new_ev::graph.events;

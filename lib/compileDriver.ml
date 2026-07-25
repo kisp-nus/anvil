@@ -178,7 +178,6 @@ let parse config =
     let assoc_list = match check_result with
       | Some gc_queue ->
           let gc_list = Queue.to_seq gc_queue |> List.of_seq in
-          AstAnnotator.clear_delay_to_exec_annotations_cache ();
           List.iter AstAnnotator.annotate_delay_to_exec gc_list;
           let gcol_to_lookup (gcol : EventGraph.event_graph_collection) =
             match gcol.cunit_file_name with
