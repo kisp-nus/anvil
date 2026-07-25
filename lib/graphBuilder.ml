@@ -173,8 +173,8 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
       let td_args = List.map (construct_graphIR graph ci ctx) arg_list in
       let ctx' = BuildContext.clear_bindings ctx |> ref in
       if List.length td_args <> List.length func.args then
-        raise (event_graph_error_default "Arguments missing in function call" e.span);
-        List.iter2 (fun td arg ->
+        raise (event_graph_error_default "Arguments missing in function call" e.span)
+      else List.iter2 (fun td arg ->
         (
           let _ = td.ld.w in (* added for tc*)
           match arg.arg_type with
