@@ -189,7 +189,8 @@ and event_graph = {
 }
 
 type proc_graph = {
-  name: Lang.identifier;
+  name: Lang.identifier; (** concrete module name, including parameter-instance mangling *)
+  proc_def_name: Lang.identifier; (** name of the source process definition *)
   extern_module: string option;
   threads: (event_graph * Lang.message_specifier option) list;
   shared_vars_info : (Lang.identifier, shared_var_info) Hashtbl.t;

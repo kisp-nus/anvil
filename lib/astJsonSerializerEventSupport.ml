@@ -31,6 +31,7 @@ type event_expr_def =
   | EventExprMax of cycle_time_sum list
 
 type process_event_json_context = {
+  graph_by_tid : (int, EventGraph.event_graph list) Hashtbl.t;
   symbolic_counters : (string, int) Hashtbl.t;
   or_symbols_by_key : (string, string) Hashtbl.t;
   max_symbols_by_key : (string, string) Hashtbl.t;
@@ -38,9 +39,9 @@ type process_event_json_context = {
 }
 
 type event_json_context = {
-  graph_by_tid : (int, EventGraph.event_graph list) Hashtbl.t;
   channel_classes : Lang.channel_class_def list;
-  process_contexts : (Lang.identifier, process_event_json_context) Hashtbl.t;
+  concrete_process_contexts : (Lang.identifier, process_event_json_context) Hashtbl.t;
+  proc_def_contexts : (Lang.identifier, process_event_json_context) Hashtbl.t;
 }
 
 let current_event_json_context : event_json_context option ref = ref None
@@ -613,7 +614,7 @@ let rel_delays_from_event (_ctx : event_json_context) (graph : EventGraph.event_
     signature's declared lifetime.
 
     Resolution is intentionally tolerant of serializer-only context:
-    - it tries every graph recorded for the thread id
+    - it tries every graph recorded for the thread id in the active process
     - it can resolve foreign endpoints by rebuilding a concrete message def from the
       endpoint's channel class
     - it probes endpoint aliases if the original endpoint name does not resolve in
@@ -641,7 +642,7 @@ let rel_delays_from_event (_ctx : event_json_context) (graph : EventGraph.event_
 let sustain_lifetime_for_msg (ctx : event_json_context) (tid : int) (base_eid : int)
     ~(from_send_completion : bool) (msg_spec : message_specifier) : cycle_time_sum option =
   let proc_ctx = current_process_ctx () in
-  let graphs = Hashtbl.find_opt ctx.graph_by_tid tid |> Option.value ~default:[] in
+  let graphs = Hashtbl.find_opt proc_ctx.graph_by_tid tid |> Option.value ~default:[] in
   let matching_send_completion_event (base_ev : EventGraph.event) (spec : message_specifier) =
     List.find_map
       (fun (sa_span : EventGraph.sustained_action Lang.ast_node) ->
@@ -860,7 +861,7 @@ let event_graph_collection_to_yojson (gc : EventGraph.event_graph_collection) : 
   in
 
   let proc_graph_to_order (p : EventGraph.proc_graph) =
-    let proc_ctx = Hashtbl.find global_ctx.process_contexts p.name in
+    let proc_ctx = Hashtbl.find global_ctx.concrete_process_contexts p.name in
     let prev_proc_ctx = !current_process_event_json_context in
     current_process_event_json_context := Some proc_ctx;
     Fun.protect
@@ -874,6 +875,7 @@ let event_graph_collection_to_yojson (gc : EventGraph.event_graph_collection) : 
 
 let build_process_context () =
   {
+    graph_by_tid = Hashtbl.create 8;
     symbolic_counters = Hashtbl.create 4;
     or_symbols_by_key = Hashtbl.create 32;
     max_symbols_by_key = Hashtbl.create 32;
@@ -881,24 +883,26 @@ let build_process_context () =
   }
 
 let build_event_json_context channel_classes (gcl : EventGraph.event_graph_collection list) =
-  let graph_by_tid = Hashtbl.create 16 in
-  let process_contexts = Hashtbl.create 16 in
+  let concrete_process_contexts = Hashtbl.create 16 in
+  let proc_def_contexts = Hashtbl.create 16 in
   List.iter
     (fun (gcol : EventGraph.event_graph_collection) ->
       List.iter
         (fun (pg : EventGraph.proc_graph) ->
-          if not (Hashtbl.mem process_contexts pg.name) then Hashtbl.add process_contexts pg.name (build_process_context ());
+          let proc_ctx = build_process_context () in
           List.iter
             (fun ((g : EventGraph.event_graph), _rst) ->
-              let current = Hashtbl.find_opt graph_by_tid g.thread_id |> Option.value ~default:[] in
-              Hashtbl.replace graph_by_tid g.thread_id (g :: current))
-            pg.threads)
+              let current = Hashtbl.find_opt proc_ctx.graph_by_tid g.thread_id |> Option.value ~default:[] in
+              Hashtbl.replace proc_ctx.graph_by_tid g.thread_id (g :: current))
+            pg.threads;
+          Hashtbl.replace concrete_process_contexts pg.name proc_ctx;
+          Hashtbl.replace proc_def_contexts pg.proc_def_name proc_ctx)
         gcol.event_graphs)
     gcl;
   {
-    graph_by_tid;
     channel_classes;
-    process_contexts;
+    concrete_process_contexts;
+    proc_def_contexts;
   }
 
 let with_process_event_json_context proc_name f =
@@ -906,11 +910,11 @@ let with_process_event_json_context proc_name f =
   | None -> f ()
   | Some ctx ->
       let proc_ctx =
-        match Hashtbl.find_opt ctx.process_contexts proc_name with
+        match Hashtbl.find_opt ctx.proc_def_contexts proc_name with
         | Some proc_ctx -> proc_ctx
         | None ->
             let proc_ctx = build_process_context () in
-            Hashtbl.add ctx.process_contexts proc_name proc_ctx;
+            Hashtbl.add ctx.proc_def_contexts proc_name proc_ctx;
             proc_ctx
       in
       let prev_proc_ctx = !current_process_event_json_context in

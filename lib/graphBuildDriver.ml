@@ -132,12 +132,12 @@ let build_proc (config : Config.compile_config) sched module_name param_values
         let g = build_thread config ci shared_vars_info GraphBuilder.construct_graphIR graph e in
         (g, reset_by)
       ) body.threads in
-      {name = module_name; extern_module = None;
+      {name = module_name; proc_def_name = proc.name; extern_module = None;
         threads = proc_threads; shared_vars_info; messages = msg_collection;
         proc_body = proc.body; spawns = List.map (fun (ident, spawn) -> (ident, spawn)) spawns}
     | Extern (extern_mod, _extern_body) ->
       let msg_collection = MessageCollection.create [] proc.args [] ci.channel_classes [] [] in
-      {name = module_name; extern_module = Some extern_mod; threads = [];
+      {name = module_name; proc_def_name = proc.name; extern_module = Some extern_mod; threads = [];
         shared_vars_info = Hashtbl.create 0; messages = msg_collection;
         proc_body = proc.body; spawns = []}
 
