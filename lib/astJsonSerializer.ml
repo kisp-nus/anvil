@@ -57,7 +57,8 @@ let param_type_to_yojson (pt: param_type) = match pt with
 let param_to_yojson (p: param) =
   kind "param" [
     ("name", identifier_to_yojson p.param_name);
-    ("type", param_type_to_yojson p.param_ty)
+    ("type", param_type_to_yojson p.param_ty);
+    ("span", code_span_to_yojson p.span)
   ]
 
 
@@ -295,7 +296,8 @@ let endpoint_def_to_yojson (e: endpoint_def) =
     ("channel_params", list param_value_to_yojson e.channel_params);
     ("dir", endpoint_direction_to_yojson e.dir);
     ("foreign", bool e.foreign);
-    ("opp", opt identifier_to_yojson e.opp)
+    ("opp", opt identifier_to_yojson e.opp);
+    ("num_instances", opt array_dimensions_to_yojson e.num_instances)
   ]
 
 let macro_def_to_yojson (m: macro_def) =
@@ -362,7 +364,8 @@ let message_def_to_yojson (m: message_def) =
     ("send_sync", message_sync_mode_to_yojson m.send_sync);
     ("recv_sync", message_sync_mode_to_yojson m.recv_sync);
     ("sig_types", list sig_type_chan_local_to_yojson m.sig_types);
-    ("span", code_span_to_yojson m.span)
+    ("span", code_span_to_yojson m.span);
+    ("file_name", opt str m.cunit_file_name)
   ]
 
 let channel_class_def_to_yojson (c: channel_class_def) =
@@ -386,7 +389,8 @@ let channel_def_to_yojson (c: channel_def) =
     ("channel_params", list param_value_to_yojson c.channel_params);
     ("endpoint_left", identifier_to_yojson c.endpoint_left);
     ("endpoint_right", identifier_to_yojson c.endpoint_right);
-    ("visibility", channel_visibility_to_yojson c.visibility)
+    ("visibility", channel_visibility_to_yojson c.visibility);
+    ("num_instances", opt array_dimensions_to_yojson c.n_instances)
   ]
 
 
