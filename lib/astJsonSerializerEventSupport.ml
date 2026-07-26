@@ -637,8 +637,8 @@ let rel_delays_from_event (_ctx : event_json_context) (graph : EventGraph.event_
 
     For recursive threads, `msg + off` also has a loop fallback: if no reachable
     matching message is found before the recurse edge, we compose the delay from the
-    base event to the recurse event with the delay from the root event to a matching
-    message in the next iteration. *)
+    base event to the recurse event with the delay from the root event to the first
+    matching message in the next iteration. *)
 let sustain_lifetime_for_msg (ctx : event_json_context) (tid : int) (base_eid : int)
     ~(from_send_completion : bool) (msg_spec : message_specifier) : cycle_time_sum option =
   let proc_ctx = current_process_ctx () in
@@ -721,7 +721,7 @@ let sustain_lifetime_for_msg (ctx : event_json_context) (tid : int) (base_eid : 
                       | Some recurse_ev, Some root_ev ->
                           let base_to_recurse = Hashtbl.find_opt rel_delays recurse_ev.id in
                           let root_rel_delays = rel_delays_from_event ctx graph root_ev in
-                          let msg_events = GraphAnalysis.events_with_msg graph.events msg in
+                          let msg_events = GraphAnalysis.events_first_msg graph.events root_ev msg in
                           let loop_sums =
                             List.filter_map
                               (fun (ev : EventGraph.event) ->
@@ -892,6 +892,7 @@ let build_event_json_context channel_classes (gcl : EventGraph.event_graph_colle
           let proc_ctx = build_process_context () in
           List.iter
             (fun ((g : EventGraph.event_graph), _rst) ->
+              GraphAnalysis.events_prepare_outs g.events;
               let current = Hashtbl.find_opt proc_ctx.graph_by_tid g.thread_id |> Option.value ~default:[] in
               Hashtbl.replace proc_ctx.graph_by_tid g.thread_id (g :: current))
             pg.threads;
