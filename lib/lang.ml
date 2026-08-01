@@ -7,15 +7,13 @@ type code_span = {
   ed : Lexing.position; (** end of the span *)
 }
 
-(** A span of the original definition of a segment of code. *)
-type def_span = {
-  st : Lexing.position; (** start of the span *)
-  ed : Lexing.position; (** end of the span *)
-  cunit : string option; (** the cunit filename in which the definition is located; if omitted, implies self *)
-}
-
 (** A dummy code span that does not represent any valid span. *)
 let code_span_dummy = { st = Lexing.dummy_pos; ed = Lexing.dummy_pos }
+
+let code_span_file_name span =
+  match span.st.Lexing.pos_fname with
+  | "" -> None
+  | file_name -> Some file_name
 
 type 'a maybe_param = 'a ParamEnv.maybe_param
 
@@ -30,7 +28,7 @@ type exec_delay = exec_delay_term list
 (** A node in AST. Containing the data plus the code span info. *)
 type 'a ast_node = {
   span : code_span;
-  mutable def_span : def_span list; (* the definitions associated with this node (if applicable) *)
+  mutable def_span : code_span list; (* the definitions associated with this node (if applicable) *)
   mutable action_event : (int * int * exec_delay) option;
     (** opt (thread id, event id, delay_to_exec) *)
     (* if applicable, denotes the event where this action is executed in, within the node's process *)
@@ -243,7 +241,6 @@ type macro_def = {
   id: identifier;
   value : int;
   span: code_span;
-  mutable cunit_file_name: string option;
 }
 
 (** A type definition ([type name = body])*)
@@ -252,7 +249,6 @@ and type_def = {
   body: data_type;
   params: param list; (** list of parameters *)
   span: code_span;
-  mutable cunit_file_name: string option;
 }
 
 (** Unit type. Basically an empty tuple. *)
@@ -339,7 +335,6 @@ type message_def = {
   recv_sync: message_sync_mode; (** how to synchronise when data is acknowledged *)
   sig_types: sig_type_chan_local list; (** the signal types of the values carried in the message *)
   span: code_span; (** code span of the message definition *)
-  mutable cunit_file_name: string option; (** the file in which the message type is defined (for reference, optional) *)
 }
 
 (** A channel class definition, containing a list of message type definitions. *)
@@ -348,7 +343,6 @@ type channel_class_def = {
   messages: message_def list;
   params: param list;  (** List of generic parameters *)
   span: code_span; (** code span of the channel class definition *)
-  mutable cunit_file_name: string option; (** the file in which the channel class is defined (for reference, optional) *)
 }
 
 (** The visibility of a channel. *)
@@ -537,7 +531,6 @@ type proc_def = {
   body: proc_def_body_maybe_extern; (** process body *)
   params: param list; (** compile-time parameters *)
   span: code_span; (** code span of the process body *)
-  mutable cunit_file_name: string option; (** the file in which the process is defined (for reference, optional) *)
 }
 
 (** An import directive for importing code from other files. *)
@@ -558,7 +551,6 @@ type func_def =  {
   args: typed_arg list;
   body: expr_node;
   span: code_span;
-  mutable cunit_file_name: string option; (** the file in which the function is defined (for reference, optional) *)
 }
 (** A channel class definition, which is a set of message types. *)
 

@@ -17,8 +17,6 @@ let _parse config =
         (Except.Text "Type error:")::msg
           |> raise_compile_error None
   );
-  (* attach the compilation unit filename to all top-level definitions for definition lookup later *)
-  List.iter (fun (_, cunit) -> AstAnnotator.attach_def_cunit_fname cunit) !cunits;
   !cunits
 
 
@@ -63,7 +61,7 @@ let _check config cunits =
       let annotate_spawn_proc_def (spawn: Lang.spawn_def Lang.ast_node) =
         match List.assoc_opt spawn.d.proc proc_lookup_table with
         | Some proc_def -> AstAnnotator.attach_def_from_top_level_proc spawn proc_def;
-        | None -> AstAnnotator.attach_def_from_code_span spawn spawn.span None
+        | None -> AstAnnotator.attach_def_from_code_span spawn spawn.span
       in
       (match proc.body with
         | Native body -> List.iter (fun spawn -> annotate_spawn_proc_def spawn) body.spawns

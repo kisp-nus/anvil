@@ -67,7 +67,7 @@ let rec lvalue_info_of graph (ci:cunit_info) ctx (e:expr_node) lval =
     let r = Utils.StringMap.find_opt ident graph.regs
       |> unwrap_or_err ("Undefined register " ^ ident) span in
     let sz = TypedefMap.data_type_size ci.typedefs ci.macro_defs r.d.d_type in
-    AstAnnotator.attach_def_span_expr e r (Some ci.file_name);
+    AstAnnotator.attach_def_span_expr e r;
     {
       lval_range = full_reg_range ident sz;
       lval_dtype = r.d.d_type
@@ -183,7 +183,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
               check_dtype err_string (Some gtype) td.ld.dtype e.span ci.file_name ci.weak_typecasts ci.typedefs ci.macro_defs;
             | None -> ()
         );
-        ctx' := BuildContext.add_binding !ctx' arg.arg_name td.ld (AstAnnotator.to_def_span e.span (Some ci.file_name))
+        ctx' := BuildContext.add_binding !ctx' arg.arg_name td.ld e.span
       ) td_args func.args;
       construct_graphIR graph ci !ctx' func.body
   | Binop (binop, e1, e2) ->
@@ -251,7 +251,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
           let td1 = construct_graphIR graph ci ctx inner_e in
           let err_string = DTypeCheck.fmt_let_binding ident dtype td1.ld.dtype in
           check_dtype err_string dtype td1.ld.dtype e1.span ci.file_name ci.weak_typecasts ci.typedefs ci.macro_defs;
-          let ctx' = BuildContext.add_binding ctx ident td1.ld (AstAnnotator.to_def_span e1.span (Some ci.file_name)) in
+          let ctx' = BuildContext.add_binding ctx ident td1.ld e1.span in
           let td = construct_graphIR graph ci ctx' e2 in
           (* check if the binding is used *)
           let binding = Typing.context_lookup ctx'.cg_lt_ctx ident |> Option.get in
@@ -293,7 +293,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
         check_dtype err_string dtype td1.ld.dtype e.span ci.file_name ci.weak_typecasts ci.typedefs ci.macro_defs;
         (* add the binding to the context *)
         let ctx' = BuildContext.wait graph ctx td1.ld.lt.live in
-        let ctx' = BuildContext.add_binding ctx' ident td1.ld (AstAnnotator.to_def_span e1.span (Some ci.file_name)) in
+        let ctx' = BuildContext.add_binding ctx' ident td1.ld e1.span in
         construct_graphIR graph ci ctx' e2
       | Let _ ->
         raise (event_graph_error_default "Discarding expression results!" e.span);
@@ -470,7 +470,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
       reg_borrows = [];
       dtype = stype.dtype;
     } in
-    let ctx_true = BuildContext.add_binding ctx_true_no_binding ident td_recv (AstAnnotator.to_def_span e1.span (Some ci.file_name)) in
+    let ctx_true = BuildContext.add_binding ctx_true_no_binding ident td_recv e1.span in
     let td1 = construct_graphIR graph ci ctx_true e1 in
     let (br_side_false, ctx_false) = BuildContext.branch_side graph ctx branch_info 1 in
     let td2 = construct_graphIR graph ci ctx_false e2 in
@@ -618,7 +618,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
     let reg_ident = Lang.get_lvalue_reg_id rlval in
     let r = Utils.StringMap.find_opt reg_ident graph.regs
       |> unwrap_or_err ("Undefined register " ^ reg_ident) e.span in
-    AstAnnotator.attach_def_span_expr e r (Some ci.file_name);
+    AstAnnotator.attach_def_span_expr e r;
     let (wires'', w'') = WireCollection.add_reg_read graph.thread_id ci.typedefs ci.macro_defs r.d graph.wires in
     graph.wires <- wires'';
     let td = {ld = {w = Some w''; lt = EventGraphOps.lifetime_const ctx.current; reg_borrows = []; dtype = r.d.d_type}} in
@@ -959,4 +959,3 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
   | Tuple _ ->
     raise (event_graph_error_default "Unimplemented expression!" e.span);
     Typing.const_data graph None unit_dtype ctx.current (* dummy return *)
-

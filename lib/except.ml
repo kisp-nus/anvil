@@ -12,7 +12,7 @@ let codespan_in filename span = Codespan (Some filename, span)
 
 (** A helper function for obtaining a {!Codespan} using the file name embedded
     in the span's [Lexing.position]. *)
-let codespan_auto (span: Lang.code_span) =
+let codespan_auto span =
   let f = span.Lang.st.Lexing.pos_fname in
   Codespan ((if f = "" then None else Some f), span)
 

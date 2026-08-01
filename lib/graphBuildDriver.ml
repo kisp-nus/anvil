@@ -70,7 +70,6 @@ let build_proc (config : Config.compile_config) sched module_name param_values
             id = p.param_name;
             value = v;
             span = p.span;
-            cunit_file_name = Some ci'.file_name;
           } :: acc
         | _ -> acc
       ) ci'.macro_defs proc.params param_values 

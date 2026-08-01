@@ -7,7 +7,7 @@ module Typing = struct
   
   type 'a binding  = {
     binding_val : 'a;
-    binding_def_span: Lang.def_span;
+    binding_def_span: Lang.code_span;
     mutable binding_used : bool; (** if the binding has been used (to enforce relevance) *)
   }
 
@@ -105,7 +105,7 @@ module Typing = struct
     let e = delay_pat_globalise msg.endpoint stype.lifetime.e in
     {ld = {w; lt = {live = event_received; dead = [(event_received, e)]}; reg_borrows = []; dtype = stype.dtype}}
 
-  let context_add (ctx : lowering_data context) (v : identifier) (d : lowering_data) (s : Lang.def_span) : lowering_data context =
+  let context_add (ctx : lowering_data context) (v : identifier) (d : lowering_data) (s : Lang.code_span) : lowering_data context =
     Utils.StringMap.add v {binding_val = d; binding_used = false; binding_def_span = s} ctx
   let context_empty = Utils.StringMap.empty
   let context_lookup (ctx : lowering_data context) (v : identifier) = Utils.StringMap.find_opt v ctx
@@ -125,7 +125,7 @@ module Typing = struct
 
     let clear_bindings (ctx : t) : t =
       {ctx with cg_lt_ctx = context_empty}
-    let add_binding (ctx : t) (v : identifier) (d : lowering_data) (s : Lang.def_span) : t =
+    let add_binding (ctx : t) (v : identifier) (d : lowering_data) (s : Lang.code_span) : t =
       {ctx with cg_lt_ctx = context_add ctx.cg_lt_ctx v d s}
     let wait g (ctx : t) (other : event) : t =
       {ctx with current = event_create g (`Later (ctx.current, other))}

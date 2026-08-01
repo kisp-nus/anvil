@@ -21,6 +21,7 @@ let code_span_to_yojson (s : code_span) =
     let open Lexing in
     assoc
       [
+        ("file_name", opt str (code_span_file_name s));
         ("start", assoc [("line", int s.st.pos_lnum); ("col", int (s.st.pos_cnum - s.st.pos_bol))]);
         ("end", assoc [("line", int s.ed.pos_lnum); ("col", int (s.ed.pos_cnum - s.ed.pos_bol))]);
       ]

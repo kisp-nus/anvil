@@ -6,7 +6,7 @@ open AstJsonSerializerHelpers
 let ast_major_version = 0 (* incr w/ breaking changes *)
 let ast_minor_version = 1 (* incr w/ non-breaking additions *)
 let ast_patch_version = 0 (* incr w/ non-breaking bug fixes *)
-let ast_wip_build = 2 (* incr w/ each build while in wip state; set to 0 when finalized *)
+let ast_wip_build = 3 (* incr w/ each build while in wip state; set to 0 when finalized *)
 
 let ast_json_schema_version_string =
   let wip_str = if ast_wip_build > 0 then Printf.sprintf "-wip.%d" ast_wip_build else "" in
@@ -15,28 +15,13 @@ let ast_json_schema_version_string =
 (* Functions for conversion of Lang constructs to Yojson.
    Each function takes a language construct and returns a Yojson.Safe.t representing that node. *)
 
-let def_span_to_yojson (s: def_span) =
-  if s.st = code_span_dummy.st && s.ed = code_span_dummy.ed then `Null else
-  let open Lexing in
-  assoc [
-    ("file_name", opt str s.cunit);
-    ("start", assoc [
-        ("line", int s.st.pos_lnum);
-        ("col", int (s.st.pos_cnum - s.st.pos_bol))
-      ]);
-    ("end", assoc [
-        ("line", int s.ed.pos_lnum);
-        ("col", int (s.ed.pos_cnum - s.ed.pos_bol))
-      ])
-  ]
-
 let identifier_to_yojson (id: identifier) = str id
 
 let ast_node_to_yojson f (n: 'a ast_node) = kind "ast_node" (
     let sp = ("span", code_span_to_yojson n.span) in
     let dt = ("data", f n.d) in
     let eid = ("event", AstJsonSerializerEventSupport.ast_node_event_to_yojson n.action_event) in
-    let def_spans = ("def_span", list_rev def_span_to_yojson n.def_span) in
+    let def_spans = ("def_span", list_rev code_span_to_yojson n.def_span) in
 
     match n.action_event, n.def_span with
     | Some _, [] -> [dt; sp; eid]
@@ -305,7 +290,6 @@ let macro_def_to_yojson (m: macro_def) =
     ("id", identifier_to_yojson m.id);
     ("value", int m.value);
     ("span", code_span_to_yojson m.span);
-    ("file_name", opt str m.cunit_file_name);
   ]
 
 let type_def_to_yojson (t: type_def) =
@@ -314,7 +298,6 @@ let type_def_to_yojson (t: type_def) =
     ("data_type", data_type_to_yojson t.body);
     ("params", list param_to_yojson t.params);
     ("span", code_span_to_yojson t.span);
-    ("file_name", opt str t.cunit_file_name);
   ]
 
 
@@ -365,7 +348,6 @@ let message_def_to_yojson (m: message_def) =
     ("recv_sync", message_sync_mode_to_yojson m.recv_sync);
     ("sig_types", list sig_type_chan_local_to_yojson m.sig_types);
     ("span", code_span_to_yojson m.span);
-    ("file_name", opt str m.cunit_file_name)
   ]
 
 let channel_class_def_to_yojson (c: channel_class_def) =
@@ -374,7 +356,6 @@ let channel_class_def_to_yojson (c: channel_class_def) =
     ("messages", list message_def_to_yojson c.messages);
     ("params", list param_to_yojson c.params);
     ("span", code_span_to_yojson c.span);
-    ("file_name", opt str c.cunit_file_name);
   ]
 
 let channel_visibility_to_yojson (v: channel_visibility) = match v with
@@ -599,7 +580,7 @@ and expr_node_to_yojson (x: expr_node) = kind "ast_node" (
     let sp = ("span", code_span_to_yojson x.span) in
     let dt = ("data", expr_to_yojson x.d) in
     let eid = ("event", AstJsonSerializerEventSupport.expr_node_event_to_yojson x.d x.action_event) in
-    let def_spans = ("def_span", list_rev def_span_to_yojson x.def_span) in
+    let def_spans = ("def_span", list_rev code_span_to_yojson x.def_span) in
 
     match x.action_event, x.def_span with
     | Some _, [] -> [dt; sp; eid]
@@ -737,7 +718,6 @@ let proc_def_to_yojson (p: proc_def) =
       ("body", proc_def_body_maybe_extern_to_yojson p.body);
       ("params", list param_to_yojson p.params);
       ("span", code_span_to_yojson p.span);
-      ("file_name", opt str p.cunit_file_name);
     ])
 
 let import_directive_to_yojson (i: import_directive) =
@@ -760,7 +740,6 @@ let func_def_to_yojson (f: func_def) =
     ("args", list typed_arg_to_yojson f.args);
     ("body", expr_node_to_yojson f.body);
     ("span", code_span_to_yojson f.span);
-    ("file_name", opt str f.cunit_file_name);
   ]
 
 (* Functions for conversion of a compilation unit to Yojson *)
