@@ -1,0 +1,3 @@
+chan ch {
+    let x = 1
+}

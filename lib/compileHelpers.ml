@@ -32,6 +32,7 @@ let rec parse_recursive cunits parsed_files (config : Config.compile_config) fil
           filename
           (fun in_data ->
             let lexbuf = Lexing.from_string (Bytes.to_string (in_data.buffer)) in
+            lexbuf.Lexing.lex_curr_p <- {lexbuf.Lexing.lex_curr_p with Lexing.pos_fname = filename};
             try Parser.cunit Lexer.read lexbuf
             with
               | Lexer.SyntaxError msg ->
@@ -55,7 +56,7 @@ let rec parse_recursive cunits parsed_files (config : Config.compile_config) fil
     let cunit = {cunit with cunit_file_name = Some filename} in
     (
       try
-        GraphBuilder.syntax_tree_precheck config cunit
+        WellFormedCheck.syntax_tree_precheck config cunit
       with
         | Except.TypeError msg -> raise_compile_error (Some filename) msg
     );

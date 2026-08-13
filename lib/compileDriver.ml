@@ -59,7 +59,7 @@ let compile out config =
             func_defs = all_func_defs;
             macro_defs = all_macro_defs} in
           let graph_collection =
-            match GraphBuilder.build config sched task.module_name task.param_values cunit
+            match GraphBuildDriver.build config sched task.module_name task.param_values cunit
             with
             | res -> res
             | exception exc ->

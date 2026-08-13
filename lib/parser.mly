@@ -18,8 +18,8 @@
 %token RIGHT_ABRACK         (* > *)
 %token LEFT_ABRACK_EQ       (* <= *)
 %token RIGHT_ABRACK_EQ      (* >= *)
-%token DOUBLE_LEFT_ABRACK   (* << *)
-%token DOUBLE_RIGHT_ABRACK  (* << *)
+%token SHL                  (* shl *)
+%token SHR                  (* shr *)
 %token KEYWORD_CONST        (* const *)
 %token KEYWORD_READY        (* ready *)
 %token KEYWORD_VOID         (* void *)
@@ -93,7 +93,7 @@
 %left DOUBLE_AND DOUBLE_OR
 %left EXCL_EQ DOUBLE_EQ
 %left XOR AND OR PLUS MINUS
-%left DOUBLE_LEFT_ABRACK DOUBLE_RIGHT_ABRACK
+%left SHL SHR
 %left ASTERISK
 %left PERIOD
 %left LEFT_BRACKET
@@ -656,9 +656,9 @@ bin_expr:
   { Lang.Binop (Lang.In, v1, (`List v2)) }
 | v1 = node(expr); EXCL_EQ; v2 = node(expr)
   { Lang.Binop (Lang.Neq, v1, (`Single v2)) }
-| v1 = node(expr); DOUBLE_LEFT_ABRACK; v2 = node(expr)
+| v1 = node(expr); SHL; v2 = node(expr)
   { Lang.Binop (Lang.Shl, v1, (`Single v2)) }
-| v1 = node(expr); DOUBLE_RIGHT_ABRACK; v2 = node(expr)
+| v1 = node(expr); SHR; v2 = node(expr)
   { Lang.Binop (Lang.Shr, v1, (`Single v2)) }
 | v1 = node(expr); LEFT_ABRACK; v2 = node(expr)
   { Lang.Binop (Lang.Lt, v1, (`Single v2)) }

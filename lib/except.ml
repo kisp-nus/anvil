@@ -10,6 +10,12 @@ let codespan_local span = Codespan (None, span)
 (** A helper function for obtaining a {!Codespan} with a specified file name. *)
 let codespan_in filename span = Codespan (Some filename, span)
 
+(** A helper function for obtaining a {!Codespan} using the file name embedded
+    in the span's [Lexing.position]. *)
+let codespan_auto span =
+  let f = span.Lang.st.Lexing.pos_fname in
+  Codespan ((if f = "" then None else Some f), span)
+
 type error_message = error_message_fragment list
 
 exception UnimplementedError of error_message

@@ -147,7 +147,7 @@ AnvilHDL is currently **experimental** and under active development. We welcome 
   - **Found a bug?** [Open an Issue](https://github.com/jasonyu1996/anvil/issues/new?assignees=&labels=bug&template=bug_report.md&title=)
   - **Need a feature?** [Request a Feature](https://github.com/jasonyu1996/anvil/issues/new?assignees=&labels=enhancement&template=feature_request.md&title=)
   - **Want to contribute?** [Submit a Pull Request](https://github.com/jasonyu1996/anvil/compare)
-  - **Editor Support:** We provide a [Visual Studio Code extension](editors/vscode/README.md) for syntax highlighting.
+  - **Editor Support:** We provide syntax highlighting and language settings for [Visual Studio Code](editors/vscode/README.md) and [Vim/Neovim](editors/vim/README.md).
 
 -----
 

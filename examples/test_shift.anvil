@@ -1,0 +1,10 @@
+proc test_shift(){
+    loop{
+        let a = 8'b1 >>
+        let b = a shl 8'd3 >>
+        let c = b shr 8'd2 >>
+        dprint "a: %b, b: %b, c: %b" (a,b,c) >>
+        cycle 1 >>
+        dfinish
+    }
+}

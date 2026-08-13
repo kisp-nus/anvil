@@ -47,8 +47,6 @@ rule read =
   | ">="      { RIGHT_ABRACK_EQ }
   | "=>"      { EQ_GT }
   | ">>"      { DOUBLE_GT }
-  | "<<"      { DOUBLE_LEFT_ABRACK }
-  | ">>"      { DOUBLE_RIGHT_ABRACK }
   | "=="      { DOUBLE_EQ }
   | "!="      { EXCL_EQ }
   | "ready"   { KEYWORD_READY }
@@ -69,6 +67,8 @@ rule read =
   | "logic"   { KEYWORD_LOGIC }
   | "foreign" { KEYWORD_FOREIGN }
   | "flat"    { KEYWORD_FLAT }
+  | "shl"     { SHL }
+  | "shr"     { SHR }
   | "let"     { KEYWORD_LET }
   | "if"      { KEYWORD_IF }
   | "else"    { KEYWORD_ELSE }
