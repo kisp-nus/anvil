@@ -28,5 +28,3 @@ val rst : t
 (** Format the definition of a port. This involves translating the
     type and direction into their equivalents in Verilog. *)
 val format : TypedefMap.t -> Lang.macro_def list -> t -> string
-
-

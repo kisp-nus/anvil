@@ -24,7 +24,7 @@ module tb4 #(
         end else begin
             state_curr <= state_next;
             rst_assert_ni <= 1'b1;
-            case (state_curr) 
+            case (state_curr)
                 CAPTURE_DATA: begin
                     tracked_data <= tb4_data_if.data;
                     lifetime_remaining <= lifetime - 1;

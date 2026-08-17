@@ -4,7 +4,7 @@ module tb1 #(
 ) (
     input logic clk_i,
     input logic rst_ni,
-  	tb1_control_if tb1_control_if,
+    tb1_control_if tb1_control_if,
     data_if tb1_data_if
 );
     logic rst_assert_ni;
@@ -21,7 +21,7 @@ module tb1 #(
         end else begin
             state_curr <= state_next;
             rst_assert_ni <= 1'b1;
-            case (state_curr) 
+            case (state_curr)
                 IDLE: begin
                     counter <= 0;
                     tracked_data <= 0;
@@ -101,7 +101,7 @@ module tb1 #(
 
     assert property (holds_valid_before_handshake)
         else $error("Assertion Failed: holds_valid_before_handshake");
-        
+
     assert property (holds_data_stable)
         else $error("Assertion Failed: holds_data_stable");
 

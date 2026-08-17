@@ -227,4 +227,4 @@ let verification_run (config : Config.compile_config) : unit =
       verification_compile stdout c
   | _ ->
       raise_compile_error None
-        [Except.Text "Error: -sv-extern requires two input files: <anvil-file> <user-sv-file>"]
+        [Except.Text "Error: -sv-extern requires an Anvil input file"]

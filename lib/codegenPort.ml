@@ -51,5 +51,3 @@ let format (typedefs : TypedefMap.t) (macro_defs: macro_def list) port =
     | Inp -> "input"
     | Out -> "output"
   in if port.dtype <> Lang.unit_dtype then Printf.sprintf "%s %s %s" inout (CodegenFormat.format_dtype typedefs macro_defs port.dtype) ep_name_formatted else ""
-
-  

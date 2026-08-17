@@ -171,7 +171,7 @@ endproperty
 ```
 
 
-## Compiler Usage 
+## Compiler Usage
 SystemVerilog extern verification is enabled using the `-sv-extern` compiler option:
 
 ```bash

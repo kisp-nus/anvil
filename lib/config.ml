@@ -42,7 +42,7 @@ let parse_args () : compile_config =
       ("-sv-extern", Arg.Set sv_extern_mode, "Enable SystemVerilog extern verification generation")
     ]
     add_input_filename
-    "anvil [-stdin] [-verbose] [-disable-lt-checks] [-O <opt-level>] [-two-round] [-json] [-strict-dtc] [-sv-extern extern] <file1> [<file2>] ...";
+    "anvil [-stdin] [-verbose] [-disable-lt-checks] [-O <opt-level>] [-two-round] [-json] [-strict-dtc] [-sv-extern] <file1> [<file2>] ...";
   {
     verbose = !verbose;
     stdin = !stdin;

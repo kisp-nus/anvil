@@ -24,7 +24,7 @@ module tb2 #(
         end else begin
             state_curr <= state_next;
             rst_assert_ni <= 1'b1;
-            case (state_curr) 
+            case (state_curr)
                 CAPTURE_DATA_AT_START: begin
                     tracked_data <= tb2_data_if.data;
                     if (tb2_control_if.ack) begin
