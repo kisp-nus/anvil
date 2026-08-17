@@ -17,7 +17,7 @@ type compile_config = {
 
   json_output : bool; (** output compilation results in JSON format *)
   input_filenames : string list; (** list of file names to be compiled *)
-  sv_extern_mode: string; (** SystemVerilog extern handling mode; use "extern" to enable it *)
+  sv_extern_mode: bool; (** enable SystemVerilog extern handling mode when set *)
 }
 
 (** Parse the process arguments for a set of configurations. *)

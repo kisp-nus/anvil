@@ -70,10 +70,25 @@ let compile_with_normal_output config =
 
 let () =
   let config = Anvil.Config.parse_args() in
-  if config.sv_extern_mode = "extern" then
-    Anvil.CompileDriver.verification_run config
-  else if config.sv_extern_mode <> "" then
-    failwith ("Unsupported -sv-extern mode: " ^ config.sv_extern_mode)
+  if config.sv_extern_mode then
+    (try
+      Anvil.CompileDriver.verification_run config
+    with
+    |  Anvil.CompileHelpers.CompileError msg ->
+      let open Anvil.Lang in
+      Printf.eprintf "Compilation failed!\n";
+      let open Anvil.Except in
+      List.iter (
+        function
+        | Text msg_text -> Printf.eprintf "%s\n" msg_text
+        | Codespan (file_name, span) -> (
+          let file_name = Option.get file_name in
+          Printf.eprintf "%s:%d:%d:\n" file_name span.st.pos_lnum (span.st.pos_cnum - span.st.pos_bol);
+          Anvil.SpanPrinter.print_code_span ~indent:2 ~trunc:(-5) stderr file_name span
+        )
+      ) msg;
+      exit 1
+    )
   else if config.json_output then
     compile_with_json_output config
   else

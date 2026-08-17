@@ -1,0 +1,35 @@
+extern import "extern_dram_init_table_source.sv"
+
+chan dram_init_table_ch<T : type> {
+    // Right side sends every 3 cycles.
+    // Left side receives every 3 cycles.
+    left timing_word : (T@#3) @#3 - @#3
+}
+
+proc dram_init_rom_ext(ep : right dram_init_table_ch<logic[16]>) extern("extern_dram_init_table_source") {
+    clk_i("clk_i");
+    rst_ni("rst_ni");
+    ep.timing_word("data_o": :);
+}
+
+proc memctrl_init_dut(ep : left dram_init_table_ch<logic[16]>) {
+    reg last_timing_word : logic[16];
+
+    loop {
+        cycle 2 >>
+        let timing = recv ep.timing_word >>
+        dprint "Received DRAM timing word: %d" (timing) >>
+        set last_timing_word := timing
+    }
+}
+
+proc extern_static_static() {
+    chan ep_le -- ep_ri : dram_init_table_ch<logic[16]>;
+
+    spawn dram_init_rom_ext(ep_ri);
+    spawn memctrl_init_dut(ep_le);
+
+    loop {
+        cycle 1
+    }
+}

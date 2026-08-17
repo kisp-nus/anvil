@@ -9,7 +9,7 @@ type compile_config = {
   two_round_graph: bool;
   json_output: bool;
   input_filenames: string list;
-  sv_extern_mode: string;
+  sv_extern_mode: bool;
 }
 
 let parse_args () : compile_config =
@@ -23,7 +23,7 @@ let parse_args () : compile_config =
   and input_filenames = ref []
   and output_filename = ref None
   and just_check = ref false
-  and sv_extern_mode = ref "" in
+  and sv_extern_mode = ref false in
 
   let add_input_filename s =
     input_filenames := s::!input_filenames
@@ -39,7 +39,7 @@ let parse_args () : compile_config =
       ("-just-check", Arg.Set just_check, "Only typecheck and validate the input files");
       ("-two-round", Arg.Set two_round_graph, "Enable codegen of logic for two rounds");
       ("-json", Arg.Set json_output, "Output compilation results in JSON format");
-      ("-sv-extern", Arg.Set_string sv_extern_mode, "SV extern mode: extern")
+      ("-sv-extern", Arg.Set sv_extern_mode, "Enable SystemVerilog extern verification generation")
     ]
     add_input_filename
     "anvil [-stdin] [-verbose] [-disable-lt-checks] [-O <opt-level>] [-two-round] [-json] [-strict-dtc] [-sv-extern extern] <file1> [<file2>] ...";

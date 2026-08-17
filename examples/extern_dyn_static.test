@@ -1,0 +1,10 @@
+CPU issued config command:        166
+Received CPU config command:   166
+CPU issued config command:        167
+Received CPU config command:   167
+CPU issued config command:        168
+Received CPU config command:   168
+CPU issued config command:        169
+Received CPU config command:   169
+CPU issued config command:        170
+- /home/daoen/anvil_newest/anvil_verification_clean/examples/extern_dyn_static_ultimate_wrapper.sv:31: Verilog $finish

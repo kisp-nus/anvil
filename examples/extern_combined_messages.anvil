@@ -1,0 +1,102 @@
+extern import "extern_memory_subsystem_sources.sv"
+
+chan memory_subsystem_ingress_ch<T1 : type, T2 : type, T3 : type, T4 : type> {
+    // TB1: Dynamic sender -> Dynamic receiver
+    left axi_req        : (T1@#2) @dyn - @dyn,
+
+    // TB2: Static sender -> Dynamic receiver
+    left read_data_beat : (T2@#2) @dyn - @#2,
+
+    // TB3: Dynamic sender -> Static receiver
+    left cfg_cmd        : (T3@#4) @#4 - @dyn,
+
+    // TB4: Static sender -> Static receiver
+    left timing_word    : (T4@#3) @#3 - @#3
+}
+
+proc memory_subsystem_sources_ext(
+    ep : right memory_subsystem_ingress_ch<
+        logic[32],
+        logic[64],
+        logic[16],
+        logic[16]
+    > ) extern("extern_memory_subsystem_sources") {
+
+    clk_i("clk_i");
+    rst_ni("rst_ni");
+
+    // TB1: data + valid + ack
+    ep.axi_req("axi_data_o":"axi_valid_o":"axi_ack_i");
+
+    // TB2: data + ack, no valid
+    ep.read_data_beat("read_data_o": :"read_ack_i");
+
+    // TB3: data + valid, no ack
+    ep.cfg_cmd("cfg_data_o":"cfg_valid_o":);
+
+    // TB4: data only
+    ep.timing_word("timing_data_o": :);
+}
+
+proc memory_controller_dut(
+    ep : left memory_subsystem_ingress_ch<
+        logic[32],
+        logic[64],
+        logic[16],
+        logic[16]
+    >
+) {
+    reg last_axi_req     : logic[32];
+    reg last_read_data   : logic[64];
+    reg last_cfg_cmd     : logic[16];
+    reg last_timing_word : logic[16];
+
+    // TB1: Dynamic / Dynamic
+    loop {
+        let req = recv ep.axi_req >>
+        dprint "Received AXI request: %d" (req) >>
+        set last_axi_req := req >>
+        cycle 2
+    }
+
+    // TB2: Static / Dynamic
+    loop {
+        cycle 2 >>
+        let beat = recv ep.read_data_beat >>
+        dprint "Received DRAM read data: %d" (beat) >>
+        set last_read_data := beat
+    }
+
+    // TB3: Dynamic / Static
+    loop {
+        let cmd = recv ep.cfg_cmd >>
+        dprint "Received CPU config command: %d" (cmd) >>
+        set last_cfg_cmd := cmd >>
+        cycle 1
+    }
+
+    // TB4: Static / Static
+    loop {
+        cycle 2 >>
+        let timing = recv ep.timing_word >>
+        dprint "Received DRAM timing word: %d" (timing) >>
+        set last_timing_word := timing
+    }
+}
+
+proc extern_combined_messages() {
+    chan ep_le -- ep_ri :
+        memory_subsystem_ingress_ch<
+            logic[32],
+            logic[64],
+            logic[16],
+            logic[16]
+        >;
+
+    spawn memory_subsystem_sources_ext(ep_ri);
+    spawn memory_controller_dut(ep_le);
+
+    loop {
+        cycle 1
+    }
+}

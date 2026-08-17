@@ -1,0 +1,23 @@
+Received DRAM timing word:   311
+Received DRAM timing word:   311
+DRAM timing word changed to:        312
+Received DRAM timing word:   312
+Received DRAM timing word:   312
+Received DRAM timing word:   312
+DRAM timing word changed to:        313
+Received DRAM timing word:   313
+Received DRAM timing word:   313
+DRAM timing word changed to:        314
+Received DRAM timing word:   313
+Received DRAM timing word:   314
+Received DRAM timing word:   314
+DRAM timing word changed to:        315
+Received DRAM timing word:   315
+Received DRAM timing word:   315
+Received DRAM timing word:   315
+DRAM timing word changed to:        316
+Received DRAM timing word:   316
+Received DRAM timing word:   316
+DRAM timing word changed to:        317
+Received DRAM timing word:   316
+- /home/daoen/anvil_newest/anvil_verification_clean/examples/extern_static_static_ultimate_wrapper.sv:28: Verilog $finish

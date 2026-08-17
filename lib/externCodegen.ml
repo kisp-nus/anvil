@@ -1,569 +1,815 @@
 open Lang
 
 type event_graph = EventGraph.event_graph
-type proc_graph = EventGraph.proc_graph  (* Ensure proc_graph is defined in EventGraph *)
+type proc_graph = EventGraph.proc_graph
 type event_graph_collection = EventGraph.event_graph_collection
 
 module Format = CodegenFormat
 
 type port_def = CodegenPort.t
 
-let codegen_endpoints printer (graphs : event_graph_collection) (g : event_graph) =
-  let print_port_signal_decl = fun (port : port_def) ->
-    if port.dtype <> Lang.unit_dtype then
-    Printf.sprintf "%s %s;" (Format.format_dtype graphs.typedefs graphs.macro_defs port.dtype) (port.name) |>
-      CodegenPrinter.print_line printer
-  in
-  List.filter (fun (p : endpoint_def) -> p.dir = Left) g.messages.endpoints |>
-  CodegenPort.gather_ports graphs.channel_classes |>
-  List.iter print_port_signal_decl
+type spawn_binding = {
+  child_ep : endpoint_def;
+  parent_ep : identifier;
+}
 
-let verification_codegen_ports printer (graphs : event_graph_collection)
-                      (endpoints : endpoint_def list) =
-  let port_list = CodegenPort.gather_ports graphs.channel_classes endpoints in
-  let rec print_port_list port_list =
-  match port_list with
-  | [] -> ()
-  | port :: [] ->
-      CodegenPort.assertformat graphs.typedefs graphs.macro_defs port |> Printf.sprintf "%s;" |> CodegenPrinter.print_line printer
-  | port :: port_list' ->
-      CodegenPort.assertformat graphs.typedefs graphs.macro_defs port |> Printf.sprintf "%s;" |> CodegenPrinter.print_line printer;
-      print_port_list port_list'
+type spawned_proc = {
+  spawn_idx : int;
+  module_name : identifier;
+  proc_graph : proc_graph;
+  bindings : spawn_binding list;
+}
+
+type channel_owner = {
+  child_ep : endpoint_def;
+}
+
+type channel_pair = {
+  channel_idx : int;
+  channel_def : channel_def;
+  left_owner : channel_owner;
+}
+
+type data_binding = {
+  data_name : string;
+  data_width : int;
+  data_port_index : int option;
+  test_inst : string;
+}
+
+type tb_entry = {
+  pair : channel_pair;
+  msg : message_def;
+  kind : string;
+  ctrl_name : string option;
+  data_bindings : data_binding list;
+  tb_mod : string;
+  lifetime : int option;
+  static_interval : int option;
+}
+
+let codegen_ports printer (graphs : event_graph_collection)
+    (endpoints : endpoint_def list) (is_mod_comb : bool) =
+
+  let port_list =
+    CodegenPort.gather_ports graphs.channel_classes endpoints
   in
-  print_port_list port_list;
+
+  let rec print_port_list = function
+    | [] -> ()
+    | [port] ->
+        CodegenPort.format graphs.typedefs graphs.macro_defs port
+        |> CodegenPrinter.print_line printer
+    | port :: rest ->
+        CodegenPort.format graphs.typedefs graphs.macro_defs port
+        |> Printf.sprintf "%s,"
+        |> CodegenPrinter.print_line printer;
+        print_port_list rest
+  in
+
+  if is_mod_comb then
+    print_port_list port_list
+  else
+    print_port_list ([CodegenPort.clk; CodegenPort.rst] @ port_list);
+
   port_list
 
-let verification_codegen_instantiations printer (graphs : event_graph_collection)
-                      (endpoints : endpoint_def list) =
-  let port_list = CodegenPort.gather_ports graphs.channel_classes endpoints in
-  let connections =
-    [
-      ".clk_i(clk_i)";
-      ".rst_ni(rst_ni)";
-    ] @ List.map (fun port ->
-      let s = CodegenPort.instanformat port in
-      Printf.sprintf ".%s (%s)" s s
-    ) port_list
-  in
-  let rec print_connections connections =
-  match connections with
-  | [] -> ()
-  | [connection] ->
-      CodegenPrinter.print_line printer connection
-  | connection :: rest ->
-      CodegenPrinter.print_line printer (connection ^ ",");
-      print_connections rest
-  in
-  print_connections connections
 
-let verification_codegen_proc printer (graphs : EventGraph.event_graph_collection) (g : proc_graph) =
-  let rec find_endpoint_message count endpoints =
-    match endpoints with
-    | [] -> None
-    | (ep, num_msgs) :: rest ->
-        if count < num_msgs then
-          Some (ep, count)
+let codegen_dut_and_ultimate_wrapper printer
+    (graphs : event_graph_collection) =
+
+  (* ============================================================
+     Small helpers
+     ============================================================ *)
+
+  let trailing_index (name : string) : int option =
+    match String.rindex_opt name '_' with
+    | None -> None
+    | Some i ->
+        let s = String.sub name (i + 1) (String.length name - i - 1) in
+        if s = "" then None
         else
-          find_endpoint_message (count - num_msgs) rest
+          try Some (int_of_string s)
+          with Failure _ -> None
   in
 
-  let endpoint_counts =
-    List.map (fun (ep : Lang.endpoint_def) ->
-      let cc =
-        MessageCollection.lookup_channel_class graphs.channel_classes ep.channel_class
-        |> Option.get
-      in
-      (ep, List.length cc.messages)
-    ) g.messages.args
+  let infer_width_from_dtype (dtype : data_type) : int =
+    match dtype with
+    | `Logic -> 1
+    | `Array (`Logic, ParamEnv.Concrete w) -> w
+    | _ -> 32
   in
 
-  (* To collect the total number of messages in each endpoint *)
-  let num_messages (ep : Lang.endpoint_def) =
-    let cc =
-      Option.get (MessageCollection.lookup_channel_class graphs.channel_classes ep.channel_class)
+  let print_csv_lines lines =
+    let rec go = function
+      | [] -> ()
+      | [x] -> CodegenPrinter.print_line printer x
+      | x :: xs ->
+          CodegenPrinter.print_line printer (x ^ ",");
+          go xs
     in
-    List.length cc.messages
+    go lines
   in
-  let counts = List.map num_messages g.messages.args in
-  let total_count = List.fold_left ( + ) 0 counts in
 
-  (* Print Top Module *)
-  (* Print the input, output ports *)
-  let name_assert = ExternName.user_sv() ^ "_assert" in
-  Printf.sprintf "module %s (" name_assert
-  |> CodegenPrinter.print_line printer ~lvl_delta_post:1;
-  CodegenPrinter.print_line printer ");";
-
-  (* Print the clock and reset declaration *)
-  Printf.sprintf "logic clk_i = 0;" |> CodegenPrinter.print_line printer;
-  Printf.sprintf "logic rst_ni;" |> CodegenPrinter.print_line printer;
-
-  (* Loop to print the instantiation for each channel modules *)
-  for count = 0 to total_count-1 do
-    let s = ExternName.user_sv() ^ "_assert_" ^ string_of_int count in
-    let c = "ch_" ^ string_of_int count in
-    Printf.sprintf "%s %s (" s c |> CodegenPrinter.print_line printer;
-    Printf.sprintf ".clk_i(clk_i)," |> CodegenPrinter.print_line printer;
-    Printf.sprintf ".rst_ni(rst_ni)" |> CodegenPrinter.print_line printer;
-    CodegenPrinter.print_line printer ~lvl_delta_pre:(-1) ~lvl_delta_post:1 ");";
-  done;
-
-  (* Print the block to drive the clock *)
-  Printf.sprintf "initial forever #5 clk_i = ~clk_i;" |> CodegenPrinter.print_line printer;
-
-  let clock_block : string = 
-  String.concat "\n" [
-    Printf.sprintf "initial begin";
-    Printf.sprintf "#0; rst_ni = 0;";
-    Printf.sprintf "#10 rst_ni=1;";
-    Printf.sprintf "#500;";
-    Printf.sprintf "$finish;";
-    Printf.sprintf "end";
-  ]
+  let find_proc_graph (name : string) : proc_graph =
+    match CodegenHelpers.lookup_proc graphs.external_event_graphs name with
+    | Some g -> g
+    | None ->
+        begin match CodegenHelpers.lookup_proc graphs.event_graphs name with
+        | Some g -> g
+        | None ->
+            failwith
+              (Printf.sprintf "Cannot find spawned process '%s'" name)
+        end
   in
-  let block = clock_block in
-  block
-  |> String.split_on_char '\n'
-  |> List.iter (fun line ->
-      CodegenPrinter.print_line printer line ~lvl_delta_post:0
-  );
 
-  CodegenPrinter.print_line printer ~lvl_delta_pre:(-1) "endmodule \n";
-  
-  (* Start Looping to Print the Wrapper *)
-  for count = 0 to total_count-1 do
-  match find_endpoint_message count endpoint_counts with
-  | Some (ep, local_idx) ->
+  let proc_is_comb (g : proc_graph) : bool =
+    let is_not_extern =
+      match g.extern_module, g.proc_body with
+      | None, _ -> true
+      | Some _, Lang.Extern (_, body) -> List.is_empty body.named_ports
+      | _ -> true
+    in
+    List.for_all (fun (thread, _) -> (thread : event_graph).comb) g.threads
+    && is_not_extern
+  in
 
-    (* Print the input, output ports *)
-    let name_assert = ExternName.user_sv() ^ "_assert_" ^ string_of_int count in
-    Printf.sprintf "module %s" name_assert |> CodegenPrinter.print_line printer;
-    CodegenPrinter.print_line printer "(" ~lvl_delta_post:1;
+  (* ============================================================
+     Message timing
+     ============================================================ *)
 
-    (* Print the clock and reset declaration *)
-    Printf.sprintf "input logic clk_i," |> CodegenPrinter.print_line printer;
-    Printf.sprintf "input logic rst_ni" |> CodegenPrinter.print_line printer;
-    (* Printf.sprintf "Number of endpoints: %d\n" (List.length g.messages.args) |> CodegenPrinter.print_line printer; *)
+  let lifetime_of_msg (m : message_def) : int option =
+    match m.sig_types with
+    | stype :: _ ->
+        begin match stype.lifetime.e with
+        | `Cycles n -> Some n
+        | _ -> None
+        end
+    | [] -> None
+  in
 
-    CodegenPrinter.print_line printer ");";
-    (* Check the lifetime contract *)
-    let number_of_lifetime_cycles (d : Lang.delay_pat_chan_local) : int option =
-      match d with
-      | `Cycles n -> Some n
-      | _ -> None
+  let static_interval_of_msg (m : message_def) : int option =
+    match m.send_sync, m.recv_sync with
+    | Static (_, interval), Dynamic -> Some interval
+    | Dynamic, Static (_, interval) -> Some interval
+    | Static (_, interval), Static _ -> Some interval
+    | _ -> None
+  in
+
+  let classify_tb_by_sync (m : message_def) : string =
+    match m.send_sync, m.recv_sync with
+    | Dynamic, Dynamic -> "tb1"
+    | _, Dynamic -> "tb2"
+    | Dynamic, _ -> "tb3"
+    | _ -> "tb4"
+  in
+
+  let ctrl_if_type = function
+    | "tb1" -> "tb1_control_if"
+    | "tb2" -> "tb2_control_if"
+    | "tb3" -> "tb3_control_if"
+    | kind -> failwith (Printf.sprintf "No control interface for %s" kind)
+  in
+
+  let ctrl_tb_port = function
+    | "tb1" -> "tb1_control_if"
+    | "tb2" -> "tb2_control_if"
+    | "tb3" -> "tb3_control_if"
+    | _ -> ""
+  in
+
+  let data_tb_port = function
+    | "tb1" -> "tb1_data_if"
+    | "tb2" -> "tb2_data_if"
+    | "tb3" -> "tb3_data_if"
+    | _ -> "tb4_data_if"
+  in
+
+  (* ============================================================
+     Top process = .anvil filename.
+
+     IMPORTANT:
+       The top process is used as the integration description.
+       Its local `chan ... -- ...` declarations and `spawn ...`
+       statements decide which processes are actually instantiated.
+
+       We DO NOT instantiate the generated top module itself inside
+       dut_wrapper, otherwise all spawned processes would be duplicated.
+     ============================================================ *)
+
+  let top_name =
+    match
+      Array.to_list Sys.argv
+      |> List.find_opt (fun arg -> Filename.check_suffix arg ".anvil")
+    with
+    | Some file ->
+        let base = Filename.basename file in
+        String.sub base 0 (String.length base - String.length ".anvil")
+    | None -> "top"
+  in
+
+  let top_graph =
+    match CodegenHelpers.lookup_proc graphs.event_graphs top_name with
+    | Some g -> g
+    | None ->
+        failwith
+          (Printf.sprintf
+             "Cannot find top process '%s'. The top process must match the .anvil filename."
+             top_name)
+  in
+
+  let top_channels =
+    match top_graph.proc_body with
+    | Lang.Native body -> List.map (fun n -> n.d) body.channels
+    | Lang.Extern _ ->
+        failwith
+          (Printf.sprintf
+             "Top process '%s' cannot be extern for -sv-extern integration"
+             top_name)
+  in
+
+  (* ============================================================
+     Resolve ONLY the processes actually spawned by the top.
+
+     A process definition that exists in the file but is never spawned
+     here is intentionally ignored.
+
+     For each spawn, pair:
+       child process argument endpoint <-> top-local endpoint
+
+     This is the same positional relationship used by normal Anvil
+     spawn code generation.
+     ============================================================ *)
+
+  let spawned_procs =
+    top_graph.spawns
+    |> List.mapi
+        (fun spawn_idx
+              (module_name, (spawn_node : spawn_def ast_node)) ->
+
+          let pg =
+            find_proc_graph module_name
+          in
+
+          let parent_eps =
+            Lang.preprocess_ep_spawn_args
+              spawn_node.d.params
+          in
+
+          let child_eps =
+            pg.messages.args
+          in
+
+          if List.length child_eps <> List.length parent_eps then
+            failwith
+              (Printf.sprintf
+                  "Invalid number of endpoint arguments for spawn of %s | expected %d, got %d"
+                  module_name
+                  (List.length child_eps)
+                  (List.length parent_eps));
+
+          let bindings =
+            List.map2
+              (fun child_ep parent_ep ->
+                {child_ep; parent_ep})
+              child_eps
+              parent_eps
+          in
+
+          {
+            spawn_idx;
+            module_name;
+            proc_graph = pg;
+            bindings;
+          })
+  in
+
+  let owners_of_endpoint (parent_ep : string) : channel_owner list =
+  spawned_procs
+  |> List.filter_map (fun spawned ->
+       match List.find_opt (fun b -> b.parent_ep = parent_ep) spawned.bindings with
+       | None -> None
+       | Some b -> Some {child_ep = b.child_ep})
+  in
+
+  let one_owner endpoint_name =
+    match owners_of_endpoint endpoint_name with
+    | [] -> None
+    | [owner] -> Some owner
+    | _ ->
+        failwith
+          (Printf.sprintf
+             "Endpoint '%s' is passed to more than one spawned process"
+             endpoint_name)
+  in
+
+  (* ============================================================
+     Active channel instances.
+
+     Multiple channels are supported independently:
+
+       chan a_le -- a_ri : ch1;
+       chan b_le -- b_ri : ch2;
+
+       spawn A(a_le); spawn B(a_ri);
+       spawn C(b_le); spawn D(b_ri);
+
+     gives:
+       channel 0 -> A <-> B
+       channel 1 -> C <-> D
+
+     If neither side is spawned, the channel is unused and ignored.
+     If exactly one side is spawned, this wrapper cannot reproduce the
+     top-level connection safely, so fail instead of generating a wrong
+     circuit.
+     ============================================================ *)
+
+  let channel_pairs =
+    top_channels
+    |> List.mapi (fun channel_idx channel_def ->
+         let left = one_owner channel_def.endpoint_left in
+         let right = one_owner channel_def.endpoint_right in
+
+         match left, right with
+         | None, None -> None
+         | Some left_owner, Some _right_owner ->
+              if channel_def.n_instances <> None then
+                failwith
+                  (Printf.sprintf
+                    "Arrayed channel '%s -- %s' is not yet supported by the verification wrapper"
+                    channel_def.endpoint_left
+                    channel_def.endpoint_right);
+
+              Some {channel_idx; channel_def; left_owner}
+         | Some _, None ->
+             failwith
+               (Printf.sprintf
+                  "Channel '%s -- %s' has a spawned process on '%s' but not on '%s'"
+                  channel_def.endpoint_left
+                  channel_def.endpoint_right
+                  channel_def.endpoint_left
+                  channel_def.endpoint_right)
+         | None, Some _ ->
+             failwith
+               (Printf.sprintf
+                  "Channel '%s -- %s' has a spawned process on '%s' but not on '%s'"
+                  channel_def.endpoint_left
+                  channel_def.endpoint_right
+                  channel_def.endpoint_right
+                  channel_def.endpoint_left))
+    |> List.filter_map (fun x -> x)
+  in
+
+  if channel_pairs = [] then
+    ()
+  else (
+
+    (* ============================================================
+       Counters
+       ============================================================ *)
+
+    let tb1_n = ref 0
+    and tb2_n = ref 0
+    and tb3_n = ref 0
+    and data_n = ref 0
+    and test_n = ref 1
     in
 
-    (* Print the lifetime contract *)
-    let print_declared_cycle_bound count (ep : Lang.endpoint_def) =
-      let cc = MessageCollection.lookup_channel_class graphs.channel_classes ep.channel_class |> Option.get in
-      if count < List.length cc.messages then
-        let msg_def = List.nth cc.messages count in
-        let msg_def = ParamConcretise.concretise_message cc.params ep.channel_params msg_def in
-          match msg_def.sig_types with
-          | [] ->
-            failwith (Printf.sprintf "Cannot emit lifetime bound parameter for endpoint %s: message has no signal types." ep.name)
-          | stype0 :: _ ->
-            match number_of_lifetime_cycles stype0.lifetime.e with
-            | Some n -> Printf.sprintf "parameter int N = %d;" n |> CodegenPrinter.print_line printer
-            | None -> failwith (Printf.sprintf "Cannot emit lifetime bound parameter for endpoint %s: lifetime bound is not statically determinable." ep.name)
-      else ()
-    in 
-    print_declared_cycle_bound local_idx ep;
-
-    (* Match synchronisation and module direction *)  
-    let assertion_declare_states (msg : message_def) (d : Lang.endpoint_direction) : string =
-      match (msg.send_sync, msg.recv_sync) with
-      | (Dynamic, Dynamic) ->
-        (match d with
-        | Left  -> "typedef enum logic [1:0] {WAIT_REQ, WAIT_ACK, DROP_VALID} state_t;"
-        | Right -> "typedef enum logic [1:0] {WAIT_ACK, DROP_VALID} state_t;")
-      | (_, Dynamic) -> "typedef enum logic [1:0] {WAIT_ACK, DROP_ACK} state_t;"
-      | (Dynamic, _) -> "typedef enum logic [1:0] {WAIT_REQ, DROP_VALID} state_t;"
-      | _ -> failwith (Printf.sprintf "Cannot emit timing contracts for endpoint %s: timing contracts are unsupported for this combination" ep.name)
+    let next_ctrl_name kind =
+      match kind with
+      | "tb1" ->
+          let i = !tb1_n in
+          tb1_n := i + 1;
+          Some (Printf.sprintf "tb1_control_if_%d" i)
+      | "tb2" ->
+          let i = !tb2_n in
+          tb2_n := i + 1;
+          Some (Printf.sprintf "tb2_control_if_%d" i)
+      | "tb3" ->
+          let i = !tb3_n in
+          tb3_n := i + 1;
+          Some (Printf.sprintf "tb3_control_if_%d" i)
+      | "tb4" -> None
+      | _ -> failwith (Printf.sprintf "Unknown TB kind: %s" kind)
     in
 
-    (* Print Reset Synchronous Signal *)
-    Printf.sprintf "logic rst_assert_ni;" |> CodegenPrinter.print_line printer;
-
-    (* Print declaration of the FSM states *)
-    let print_declaration_FSM count (ep : Lang.endpoint_def) =
-      let cc = MessageCollection.lookup_channel_class graphs.channel_classes ep.channel_class |> Option.get in
-      if count < List.length cc.messages then
-        let msg_def = List.nth cc.messages count in
-        let msg_def = ParamConcretise.concretise_message cc.params ep.channel_params msg_def in
-          CodegenPrinter.print_line printer (assertion_declare_states msg_def ep.dir)
-      else ()
-    in 
-    print_declaration_FSM local_idx ep;
-
-    (* Print the shadow logics *)
-    Printf.sprintf "state_t state_prev, state_curr, state_next;" |> CodegenPrinter.print_line printer;
-    Printf.sprintf "int counter = 0;" |> CodegenPrinter.print_line printer;
-
-    (* Print the declarations of ports, ack, valid, data ... *)
-    let _ = verification_codegen_ports printer graphs g.messages.args in
-      let initEvents = fst @@ List.hd g.threads in
-      codegen_endpoints printer graphs initEvents;
-
-    (* Retreive the user module name *)
-    let s = ExternName.user_sv () in
-    (* Print user module instantiation *)
-    Printf.sprintf "%s user_sv (" s |> CodegenPrinter.print_line printer;
-    let _ = verification_codegen_instantiations printer graphs g.messages.args in
-    CodegenPrinter.print_line printer ~lvl_delta_pre:(-1) ~lvl_delta_post:1 ");";
-
-    (* Print anvil module instantiation *)
-    Printf.sprintf "%s anvil_sv (" g.name |> CodegenPrinter.print_line printer;
-    let _ = verification_codegen_instantiations printer graphs g.messages.args in
-    CodegenPrinter.print_line printer ~lvl_delta_pre:(-1) ~lvl_delta_post:1 ");";
-
-    let valid_name_opt = CodegenPort.valid_port_names graphs.channel_classes ep local_idx in
-    let ack_name_opt = CodegenPort.ack_port_names graphs.channel_classes ep local_idx in
-    let data_names = CodegenPort.data_port_names graphs.channel_classes ep local_idx in
-    let datas =
-      match data_names with
-      | [] -> ""
-      | [d] -> d
-      | _ -> failwith "Verification assertions currently support only one non-unit data signal per message"
+    let next_data_binding (port : port_def) =
+      let di = !data_n in
+      data_n := di + 1;
+      let ti = !test_n in
+      test_n := ti + 1;
+      {
+        data_name = Printf.sprintf "data%d" di;
+        data_width = infer_width_from_dtype port.dtype;
+        data_port_index = trailing_index port.name;
+        test_inst = Printf.sprintf "test%d" ti;
+      }
     in
 
-    let ff_rst_block : string = 
-      String.concat "\n" [
-        Printf.sprintf "always_ff @(posedge clk_i or negedge rst_ni) begin";
-        Printf.sprintf "  if (!rst_ni)";
-        Printf.sprintf "    rst_assert_ni <= 1'b0;";
-        Printf.sprintf "  else";
-        Printf.sprintf "    rst_assert_ni <= 1'b1;";
-        Printf.sprintf "end";
-      ]
-    in
-    
-    let block = ff_rst_block in
-      block
-      |> String.split_on_char '\n'
-      |> List.iter (fun line ->
-          CodegenPrinter.print_line printer line ~lvl_delta_post:0
-      );
-
-    (* Fixed FSM always_ff block *)
-    let ff_block (state1 : string) (state2 : string): string =
-    String.concat "\n" [
-      Printf.sprintf "always_ff @(posedge clk_i or negedge rst_ni) begin";
-      Printf.sprintf "  if (!rst_ni) begin";
-      Printf.sprintf "    state_curr <= %s;" state1;
-      Printf.sprintf "    counter <= 0;";
-      Printf.sprintf "  end else begin";
-      Printf.sprintf "    state_prev <= state_curr;";
-      Printf.sprintf "    state_curr <= state_next;";
-      Printf.sprintf "";
-      Printf.sprintf "    if (state_curr == %s || counter != 0) begin" state2;
-      Printf.sprintf "      counter <= counter + 1;";
-      Printf.sprintf "    end";
-      Printf.sprintf "";
-      Printf.sprintf "    if (counter == N-1) begin";
-      Printf.sprintf "      counter <= 0;";
-      Printf.sprintf "    end";
-      Printf.sprintf "  end";
-      Printf.sprintf "end";
-    ]
+    let dummy_data_binding () =
+      let di = !data_n in
+      data_n := di + 1;
+      let ti = !test_n in
+      test_n := ti + 1;
+      {
+        data_name = Printf.sprintf "data%d" di;
+        data_width = 1;
+        data_port_index = None;
+        test_inst = Printf.sprintf "test%d" ti;
+      }
     in
 
-    (* FSM always_comb block for sender *)
-    let comb_block_nosyn_sender (valid_name : string) (ack_name : string) : string =
-    String.concat "\n" [
-      Printf.sprintf "always_comb begin";
-      Printf.sprintf "  case (state_curr)";
-      Printf.sprintf "";
-      Printf.sprintf "    WAIT_REQ: begin";
-      Printf.sprintf "      if (%s) begin" valid_name;
-      Printf.sprintf "        state_next = WAIT_ACK;";
-      Printf.sprintf "      end else begin";
-      Printf.sprintf "        state_next = WAIT_REQ;";
-      Printf.sprintf "      end";
-      Printf.sprintf "    end";
-      Printf.sprintf "";
-      Printf.sprintf "    WAIT_ACK: begin";
-      Printf.sprintf "      if (%s) begin" ack_name;
-      Printf.sprintf "        state_next = DROP_VALID;";
-      Printf.sprintf "      end else begin";
-      Printf.sprintf "        state_next = WAIT_ACK;";
-      Printf.sprintf "      end";
-      Printf.sprintf "    end";
-      Printf.sprintf "";
-      Printf.sprintf "    DROP_VALID: begin";
-      Printf.sprintf "      state_next = WAIT_REQ;";
-      Printf.sprintf "    end";
-      Printf.sprintf "";
-      Printf.sprintf "    default: state_next = WAIT_REQ;";
-      Printf.sprintf "  endcase";
-      Printf.sprintf "end";
-    ]
+    (* ============================================================
+       Build one TB entry for every message of every ACTIVE channel.
+
+       One message -> one shared control interface.
+
+       If the message carries multiple data values, each data value gets
+       its own data_if and its own TB instance, while all those TBs share
+       the SAME control interface for that message.
+     ============================================================ *)
+
+    let tb_entries =
+      channel_pairs
+      |> List.concat_map (fun pair ->
+           let cc =
+             match
+               MessageCollection.lookup_channel_class
+                 graphs.channel_classes
+                 pair.channel_def.channel_class
+             with
+             | Some cc -> cc
+             | None ->
+                 failwith
+                   (Printf.sprintf
+                      "Cannot find channel class '%s'"
+                      pair.channel_def.channel_class)
+           in
+
+           cc.messages
+           |> List.map (fun raw_msg ->
+                let msg =
+                  ParamConcretise.concretise_message
+                    cc.params
+                    pair.channel_def.channel_params
+                    raw_msg
+                in
+
+                let kind = classify_tb_by_sync msg in
+                let ctrl_name = next_ctrl_name kind in
+
+                (* Use one endpoint owner only to discover the generated
+                   child-module data ports. Both endpoint owners have the
+                   same channel payload shape. Match exact generated data
+                   port names so similarly named messages cannot collide. *)
+                let all_child_ports =
+                  CodegenPort.gather_ports
+                    graphs.channel_classes
+                    [pair.left_owner.child_ep]
+                in
+
+                let data_ports =
+                  msg.sig_types
+                  |> List.mapi (fun data_idx stype -> (data_idx, stype))
+                  |> List.filter_map (fun (data_idx, stype) ->
+                       if stype.dtype = Lang.unit_dtype then
+                         None
+                       else
+                         let port_name =
+                           Format.format_msg_data_signal_name
+                             pair.left_owner.child_ep.name
+                             msg.name
+                             data_idx
+                         in
+                         match
+                           List.find_opt
+                             (fun (p : port_def) -> p.name = port_name)
+                             all_child_ports
+                         with
+                         | Some p -> Some p
+                         | None ->
+                             failwith
+                               (Printf.sprintf
+                                  "Cannot find generated data port '%s' for channel %s message %s"
+                                  port_name
+                                  pair.channel_def.channel_class
+                                  msg.name))
+                in
+
+                let data_bindings =
+                  match data_ports with
+                  | [] -> [dummy_data_binding ()]
+                  | ports -> List.map next_data_binding ports
+                in
+
+                {
+                  pair;
+                  msg;
+                  kind;
+                  ctrl_name;
+                  data_bindings;
+                  tb_mod = kind;
+                  lifetime = lifetime_of_msg msg;
+                  static_interval = static_interval_of_msg msg;
+                }))
     in
 
-    (* FSM always_comb block for receiver *)
-    let comb_block_nosyn_receiver (ack_name : string) : string =
-    String.concat "\n" [
-      Printf.sprintf "always_comb begin";
-      Printf.sprintf "  case (state_curr)";
-      Printf.sprintf "";
-
-      Printf.sprintf "    WAIT_ACK: begin";
-      Printf.sprintf "      if (%s) begin" ack_name;
-      Printf.sprintf "        state_next = DROP_VALID;";
-      Printf.sprintf "      end else begin";
-      Printf.sprintf "        state_next = WAIT_ACK;";
-      Printf.sprintf "      end";
-      Printf.sprintf "    end";
-      Printf.sprintf "";
-
-      Printf.sprintf "    DROP_VALID: begin";
-      Printf.sprintf "      state_next = WAIT_ACK;";
-      Printf.sprintf "    end";
-      Printf.sprintf "";
-
-      Printf.sprintf "    default: state_next = WAIT_ACK;";
-
-      Printf.sprintf "  endcase";
-      Printf.sprintf "end";
-    ]
+    let entries_for_pair pair =
+      List.filter (fun e -> e.pair.channel_idx = pair.channel_idx) tb_entries
     in
 
-    let comb_block_syn (state1 : string) (state2 : string) (signal : string) : string =
-    String.concat "\n" [
-      Printf.sprintf "always_comb begin";
-      Printf.sprintf "  case (state_curr)";
-      Printf.sprintf "";
-
-      Printf.sprintf "    %s: begin" state1;
-      Printf.sprintf "      if (%s) begin" signal;
-      Printf.sprintf "        state_next = %s;" state2;
-      Printf.sprintf "      end else begin";
-      Printf.sprintf "        state_next = %s;" state1;
-      Printf.sprintf "      end";
-      Printf.sprintf "    end";
-      Printf.sprintf "";
-
-      Printf.sprintf "    %s: begin" state2;
-      Printf.sprintf "      state_next = %s;" state1;
-      Printf.sprintf "    end";
-      Printf.sprintf "";
-
-      Printf.sprintf "    default: state_next = %s;" state1;
-
-      Printf.sprintf "  endcase";
-      Printf.sprintf "end";
-    ]
+    let pair_of_parent_endpoint parent_ep =
+      List.find_opt
+        (fun pair ->
+          pair.channel_def.endpoint_left = parent_ep
+          || pair.channel_def.endpoint_right = parent_ep)
+        channel_pairs
     in
 
-    let require_valid () =
-      match valid_name_opt with
-      | Some s -> s
-      | None -> failwith (Printf.sprintf "Expected valid signal for endpoint %s message %d, but none exists" ep.name local_idx)
+    (* ============================================================
+       dut_wrapper interface ports.
+
+       Use the full interface (no .dut modport) because dut_wrapper now
+       contains BOTH sides of the channel. One spawned process may drive
+       valid/data while the other drives ack.
+     ============================================================ *)
+
+    CodegenPrinter.print_line printer "";
+    CodegenPrinter.print_line printer (Printf.sprintf "module dut_wrapper_%s ("top_name)
+  ~lvl_delta_post:1;
+    let dut_ports =
+      ["input logic clk_i"; "input logic rst_ni"]
+      @ List.filter_map
+          (fun e ->
+            match e.ctrl_name with
+            | None -> None
+            | Some ctrl ->
+                Some (Printf.sprintf "%s %s" (ctrl_if_type e.kind) ctrl))
+          tb_entries
+      @ List.concat_map
+          (fun e ->
+            List.map
+              (fun d -> Printf.sprintf "data_if %s" d.data_name)
+              e.data_bindings)
+          tb_entries
     in
-    let require_ack () =
-      match ack_name_opt with
-      | Some s -> s
-      | None -> failwith (Printf.sprintf "Expected ack signal for endpoint %s message %d, but none exists" ep.name local_idx)
+
+    print_csv_lines dut_ports;
+    CodegenPrinter.print_line
+      printer
+      ");"
+      ~lvl_delta_pre:(-1)
+      ~lvl_delta_post:1;
+
+    (* ============================================================
+       Instantiate every process actually spawned by the TOP.
+
+       Unspawned proc definitions are never instantiated.
+
+       A spawned proc may own endpoints from more than one channel; all
+       of its endpoint bindings are connected in this single instance.
+     ============================================================ *)
+
+    let connections_for_binding (binding : spawn_binding) =
+      match pair_of_parent_endpoint binding.parent_ep with
+      | None ->
+          failwith
+            (Printf.sprintf
+               "Spawn endpoint '%s' is not part of an active top-level channel"
+               binding.parent_ep)
+      | Some pair ->
+          entries_for_pair pair
+          |> List.concat_map (fun e ->
+               let ctrl_conns =
+                 match e.ctrl_name with
+                 | None -> []
+                 | Some ctrl ->
+                     (if CodegenPort.message_has_valid_port e.msg then
+                        [Printf.sprintf
+                           ".%s(%s.valid)"
+                           (Format.format_msg_valid_signal_name
+                              binding.child_ep.name e.msg.name)
+                           ctrl]
+                      else [])
+                     @
+                     (if CodegenPort.message_has_ack_port e.msg then
+                        [Printf.sprintf
+                           ".%s(%s.ack)"
+                           (Format.format_msg_ack_signal_name
+                              binding.child_ep.name e.msg.name)
+                           ctrl]
+                      else [])
+               in
+
+               let data_conns =
+                 e.data_bindings
+                 |> List.filter_map (fun d ->
+                      match d.data_port_index with
+                      | None -> None
+                      | Some data_idx ->
+                          Some
+                            (Printf.sprintf
+                               ".%s(%s.data)"
+                               (Format.format_msg_data_signal_name
+                                  binding.child_ep.name e.msg.name data_idx)
+                               d.data_name))
+               in
+
+               ctrl_conns @ data_conns)
     in
-  
-    (* match the synchronisation and direction to print the correct fsm and assertion properties *)
-    let match_fsm_assertion (msg : message_def) (d : Lang.endpoint_direction) (data : string): string =
-      match (msg.send_sync, msg.recv_sync) with
-      | (Dynamic, Dynamic) -> 
-        (match d with
-        | Left  -> 
-          let valid_name = require_valid () in
-          let ack_name = require_ack () in
-          let block = ff_block "WAIT_REQ" "DROP_VALID" in
-          block
-          |> String.split_on_char '\n'
-          |> List.iter (fun line ->
-              CodegenPrinter.print_line printer line ~lvl_delta_post:0
-          );
-          
-          let block = comb_block_nosyn_sender valid_name ack_name in
-          block
-          |> String.split_on_char '\n'
-          |> List.iter (fun line ->
-              CodegenPrinter.print_line printer line ~lvl_delta_post:0
-          );
-          String.concat "\n" [
-            Printf.sprintf "`include \"nosyn_user_sender.svh\"\n";
-            Printf.sprintf "assert property (data_stable_valid_high(%s, state_curr, %s))" valid_name data;
-            Printf.sprintf "else $error(\"Assertion Failed: data_stable_valid_high\");\n";
-            Printf.sprintf "assert property (valid_high_until_ack_high(%s, state_curr, %s))" valid_name ack_name;
-            Printf.sprintf "else $error(\"Assertion Failed: valid_high_until_ack_high\");\n";
-            Printf.sprintf "assert property (ack_high_valid_low(%s, state_curr, %s))" valid_name ack_name;
-            Printf.sprintf "else $error(\"Assertion Failed: ack_high_valid_low\");\n";
-            Printf.sprintf "assert property (data_stable_N_cycles_after_ack_high(state_curr, counter, %s))" data;
-            Printf.sprintf "else $error(\"Assertion Failed: data_stable_N_cycles_after_ack_high\");\n";
-            Printf.sprintf "assert property (wait_req_ack_low(%s, %s))" valid_name ack_name;
-            Printf.sprintf "else $error(\"Assertion Failed: wait_req_ack_low\");\n";
-          ]
-        | Right -> 
-          let valid_name = require_valid () in
-          let ack_name = require_ack () in
-          let block = ff_block "WAIT_ACK" "DROP_VALID" in
-          block
-          |> String.split_on_char '\n'
-          |> List.iter (fun line ->
-              CodegenPrinter.print_line printer line ~lvl_delta_post:0
-          );
-          
-          let block = comb_block_nosyn_receiver ack_name in
-          block
-          |> String.split_on_char '\n'
-          |> List.iter (fun line ->
-              CodegenPrinter.print_line printer line ~lvl_delta_post:0
-          );
-          String.concat "\n" [
-            Printf.sprintf "`include \"nosyn_user_receiver.svh\"\n";
-            Printf.sprintf "assert property (ack_low_when_valid_high(state_curr, %s, %s, state_prev))" valid_name ack_name;
-            Printf.sprintf "else $error(\"Assertion Failed: ack_low_when_valid_high\");\n";
-            Printf.sprintf "assert property (ack_low_after_handshake(state_prev, %s))" ack_name;
-            Printf.sprintf "else $error(\"Assertion Failed: ack_low_after_handshake\");\n";
-          ] )
-      | (_, Dynamic) -> 
-        (match d with 
-        | Left ->
-          let ack_name = require_ack () in
-          let block = ff_block "WAIT_ACK" "DROP_ACK" in
-          block
-          |> String.split_on_char '\n'
-          |> List.iter (fun line ->
-              CodegenPrinter.print_line printer line ~lvl_delta_post:0
-          );
 
-          let block = comb_block_syn "WAIT_ACK" "DROP_ACK" ack_name in
-          block
-          |> String.split_on_char '\n'
-          |> List.iter (fun line ->
-              CodegenPrinter.print_line printer line ~lvl_delta_post:0
-          );
-          String.concat "\n" [
-            Printf.sprintf "`include \"syn_recv_dynamic_user_sender.svh\"\n";
-            Printf.sprintf "assert property (data_stable_N_cycles (state_curr, counter, %s))" data;
-            Printf.sprintf "else $error(\"Assertion Failed: data_stable_N_cycles\");\n";
-          ]
-        | Right -> 
-          let ack_name = require_ack () in
-          let block = ff_block "WAIT_ACK" "DROP_ACK" in
-          block
-          |> String.split_on_char '\n'
-          |> List.iter (fun line ->
-              CodegenPrinter.print_line printer line ~lvl_delta_post:0
-          );
+    List.iter
+      (fun spawned ->
+        let conns =
+          (if proc_is_comb spawned.proc_graph then
+             []
+           else
+             [".clk_i(clk_i)"; ".rst_ni(rst_ni)"])
+          @ List.concat_map connections_for_binding spawned.bindings
+        in
 
-          let block = comb_block_syn "WAIT_ACK" "DROP_ACK" ack_name in
-          block
-          |> String.split_on_char '\n'
-          |> List.iter (fun line ->
-              CodegenPrinter.print_line printer line ~lvl_delta_post:0
-          );
-          String.concat "\n" [
-            Printf.sprintf "`include \"syn_recv_dynamic_user_receiver.svh\"\n";
-            Printf.sprintf "assert property (ack_low_during_DROP_ACK (state_curr, %s))" ack_name;
-            Printf.sprintf "else $error(\"Assertion Failed: ack_low_during_DROP_ACK\");\n";
-            Printf.sprintf "assert property (data_stable_N_cycles (state_curr, counter, %s))" data;
-            Printf.sprintf "else $error(\"Assertion Failed: data_stable_N_cycles\");\n";
-          ])
-      | (Dynamic, _) -> 
-        (match d with
-        | Left ->
-          let valid_name = require_valid () in
-          let block = ff_block "WAIT_REQ" "DROP_VALID" in
-          block
-          |> String.split_on_char '\n'
-          |> List.iter (fun line ->
-              CodegenPrinter.print_line printer line ~lvl_delta_post:0
-          );
+        CodegenPrinter.print_line
+          printer
+          (Printf.sprintf
+             "%s _spawn_%d ("
+             spawned.module_name
+             spawned.spawn_idx)
+          ~lvl_delta_post:1;
 
-          let block = comb_block_syn "WAIT_REQ" "DROP_VALID" valid_name in
-          block
-          |> String.split_on_char '\n'
-          |> List.iter (fun line ->
-              CodegenPrinter.print_line printer line ~lvl_delta_post:0
-          );
-          String.concat "\n" [
-            Printf.sprintf "`include \"syn_send_dynamic_user_sender.svh\"\n";
-            Printf.sprintf "assert property (data_stable_N_cycles (state_curr, counter, %s))" data;
-            Printf.sprintf "else $error(\"Assertion Failed: data_stable_N_cycles\");\n";
-            Printf.sprintf "assert property (valid_low_during_DROP_VALID (state_curr, %s))" valid_name;
-            Printf.sprintf "else $error(\"Assertion Failed: valid_low_during_DROP_VALID\");\n";
-          ]
-        | Right -> 
-          let valid_name = require_valid () in
-          let block = ff_block "WAIT_REQ" "DROP_VALID" in
-          block
-          |> String.split_on_char '\n'
-          |> List.iter (fun line ->
-              CodegenPrinter.print_line printer line ~lvl_delta_post:0
-          );
+        print_csv_lines conns;
 
-          let block = comb_block_syn "WAIT_REQ" "DROP_VALID" valid_name in
-          block
-          |> String.split_on_char '\n'
-          |> List.iter (fun line ->
-              CodegenPrinter.print_line printer line ~lvl_delta_post:0
-          );
-          String.concat "\n" [
-            Printf.sprintf "`include \"syn_send_dynamic_user_receiver.svh\"\n";
-            Printf.sprintf "assert property (data_stable_N_cycles (state_curr, counter, %s))" data;
-            Printf.sprintf "else $error(\"Assertion Failed: data_stable_N_cycles\");\n";
-          ])
-      | _ -> failwith (Printf.sprintf "Cannot emit assertions for endpoint %s: unsupported timing-contract combination" ep.name)
+        CodegenPrinter.print_line
+          printer
+          ");"
+          ~lvl_delta_pre:(-1))
+      spawned_procs;
+
+    CodegenPrinter.print_line
+      printer
+      "endmodule"
+      ~lvl_delta_pre:(-1);
+
+    (* ============================================================
+       <top_module>_ultimate_wrapper
+       ============================================================ *)
+
+    CodegenPrinter.print_line printer "";
+    CodegenPrinter.print_line
+      printer
+      (Printf.sprintf "module %s_ultimate_wrapper;" top_name)
+      ~lvl_delta_post:1;
+
+    CodegenPrinter.print_line printer "logic clk_i;";
+    CodegenPrinter.print_line printer "logic rst_ni;";
+    CodegenPrinter.print_line printer "initial clk_i = 1'b0;";
+    CodegenPrinter.print_line printer "initial forever #5 clk_i = ~clk_i;";
+
+    CodegenPrinter.print_line printer "initial begin";
+    CodegenPrinter.print_line printer "  rst_ni = 1'b0;";
+    CodegenPrinter.print_line printer "  #20 rst_ni = 1'b1;";
+    CodegenPrinter.print_line printer "  #500;";
+    CodegenPrinter.print_line printer "  $finish;";
+    CodegenPrinter.print_line printer "end";
+
+    (* ============================================================
+       Interface instances
+       ============================================================ *)
+
+    List.iter
+      (fun e ->
+        match e.ctrl_name with
+        | None -> ()
+        | Some ctrl ->
+            CodegenPrinter.print_line
+              printer
+              (Printf.sprintf "%s %s();" (ctrl_if_type e.kind) ctrl))
+      tb_entries;
+
+    List.iter
+      (fun e ->
+        List.iter
+          (fun d ->
+            CodegenPrinter.print_line
+              printer
+              (Printf.sprintf
+                 "data_if #(%d) %s();"
+                 d.data_width
+                 d.data_name))
+          e.data_bindings)
+      tb_entries;
+
+    (* ============================================================
+       Instantiate dut_wrapper
+       ============================================================ *)
+
+    CodegenPrinter.print_line printer (Printf.sprintf "dut_wrapper_%s dut1 (" top_name) ~lvl_delta_post:1;
+
+    let ext_dut_conns =
+      [".clk_i(clk_i)"; ".rst_ni(rst_ni)"]
+      @ List.filter_map
+          (fun e ->
+            match e.ctrl_name with
+            | None -> None
+            | Some ctrl -> Some (Printf.sprintf ".%s(%s)" ctrl ctrl))
+          tb_entries
+      @ List.concat_map
+          (fun e ->
+            List.map
+              (fun d -> Printf.sprintf ".%s(%s)" d.data_name d.data_name)
+              e.data_bindings)
+          tb_entries
     in
-    
-    (* Print the Assertions *)
-    let print_fsm_assertion count (ep : Lang.endpoint_def) =
-      let cc = MessageCollection.lookup_channel_class graphs.channel_classes ep.channel_class |> Option.get in
-      if count < List.length cc.messages then
-        let msg_def = List.nth cc.messages count in
-        let msg_def = ParamConcretise.concretise_message cc.params ep.channel_params msg_def in
-          let assertion_block = match_fsm_assertion msg_def ep.dir datas in
-          assertion_block
-          |> String.split_on_char '\n'
-          |> List.iter (fun line ->
-            CodegenPrinter.print_line printer line ~lvl_delta_post:0)
-      else ()
-    in 
-    print_fsm_assertion local_idx ep;
 
-  CodegenPrinter.print_line printer ~lvl_delta_pre:(-1) "endmodule"
+    print_csv_lines ext_dut_conns;
+    CodegenPrinter.print_line printer ");" ~lvl_delta_pre:(-1);
 
-  | None ->
-      ()
-  done
+    (* ============================================================
+       Instantiate verification TBs.
 
-let verification_generate_preamble out =
-  [
-    "/*verilator lint_off DECLFILENAME*/"
-  ] |> List.iter (Printf.fprintf out "%s\n")
+       One message has one control interface.
+       If it carries N data values, instantiate N TB monitors that all
+       share that same control interface, one monitor per data_if.
+     ============================================================ *)
 
-let verification_generate_extern_import out file_name =
-  In_channel.with_open_text file_name
+    List.iter
+      (fun e ->
+        let tb_params =
+          match e.kind with
+          | "tb1" ->
+              begin match e.lifetime with
+              | Some n -> Printf.sprintf "#(.lifetime(%d)) " n
+              | None -> ""
+              end
+          | _ ->
+              let lifetime = Option.value e.lifetime ~default:3 in
+              let static_interval = Option.value e.static_interval ~default:2 in
+              Printf.sprintf
+                "#(.lifetime(%d), .static_interval(%d)) "
+                lifetime
+                static_interval
+        in
+
+        List.iter
+          (fun d ->
+            CodegenPrinter.print_line
+              printer
+              (Printf.sprintf "%s %s%s (" e.tb_mod tb_params d.test_inst)
+              ~lvl_delta_post:1;
+
+            let tb_conns =
+              [".clk_i(clk_i)";
+               ".rst_ni(rst_ni)";
+               Printf.sprintf ".%s(%s)" (data_tb_port e.kind) d.data_name]
+              @
+              (match e.ctrl_name with
+               | None -> []
+               | Some ctrl ->
+                   [Printf.sprintf ".%s(%s)" (ctrl_tb_port e.kind) ctrl])
+            in
+
+            print_csv_lines tb_conns;
+            CodegenPrinter.print_line printer ");" ~lvl_delta_pre:(-1))
+          e.data_bindings)
+      tb_entries;
+
+    CodegenPrinter.print_line
+      printer
+      "endmodule"
+      ~lvl_delta_pre:(-1)
+  )
+
+
+let generate_extern_import out file_name =
+  In_channel.with_open_text
+    file_name
     (fun in_channel ->
       let eof = ref false in
       while not !eof do
         match In_channel.input_line in_channel with
         | Some line ->
-          Out_channel.output_string out line;
-          Out_channel.output_char out '\n'
+            Out_channel.output_string out line;
+            Out_channel.output_char out '\n'
         | None -> eof := true
-      done
-    )
+      done)
 
-let verification_generate (out : out_channel)
-             (config : Config.compile_config)
-             (graphs : EventGraph.event_graph_collection) : unit =
+
+let generate
+    (out : out_channel)
+    (config : Config.compile_config)
+    (graphs : EventGraph.event_graph_collection)
+    : unit =
+
   if config.verbose then (
     Printf.eprintf "==== CodeGen Details ====\n";
-    List.iter (fun (pg : proc_graph) ->
-      List.iter (fun (g, _)  ->
-        EventGraphOps.print_dot_graph g Out_channel.stderr
-      ) pg.threads
-    ) graphs.event_graphs;
-  );
-  let printer = CodegenPrinter.create out 2 in
-  List.iter (verification_codegen_proc printer graphs) graphs.event_graphs
 
+    List.iter
+      (fun (pg : proc_graph) ->
+        List.iter
+          (fun (g, _) ->
+            EventGraphOps.print_dot_graph g Out_channel.stderr)
+          pg.threads)
+      graphs.event_graphs
+  );
+
+  let printer = CodegenPrinter.create out 2 in
+  codegen_dut_and_ultimate_wrapper printer graphs
