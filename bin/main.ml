@@ -74,17 +74,24 @@ let () =
     (try
       Anvil.CompileDriver.verification_run config
     with
-    |  Anvil.CompileHelpers.CompileError msg ->
+    | Anvil.CompileHelpers.CompileError msg ->
       let open Anvil.Lang in
       Printf.eprintf "Compilation failed!\n";
       let open Anvil.Except in
       List.iter (
         function
-        | Text msg_text -> Printf.eprintf "%s\n" msg_text
-        | Codespan (file_name, span) -> (
-          let file_name = Option.get file_name in
-          Printf.eprintf "%s:%d:%d:\n" file_name span.st.pos_lnum (span.st.pos_cnum - span.st.pos_bol);
-          Anvil.SpanPrinter.print_code_span ~indent:2 ~trunc:(-5) stderr file_name span
+        | Text msg_text ->
+          Printf.eprintf "%s\n" msg_text
+        | Codespan (_, span) -> (
+          let file_name = span.st.pos_fname in
+          if file_name <> "" then (
+            Printf.eprintf "%s:%d:%d:\n"
+              file_name
+              span.st.pos_lnum
+              (span.st.pos_cnum - span.st.pos_bol + 1);
+            Anvil.SpanPrinter.print_code_span
+              ~indent:2 ~trunc:(-5) stderr span
+          )
         )
       ) msg;
       exit 1
