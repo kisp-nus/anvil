@@ -14,7 +14,7 @@ let compile_with_json_output config =
     try
       Anvil.AstAnnotator.enabled := config.ast_output;
       if config.ast_output then
-        let cunits, gcols, errors = Anvil.CompileDriver.parse config in
+        let parse_result = Anvil.CompileDriver.parse config in
         let json_errors =
           let convert error_msg = Anvil.JsonOutput.error_message_to_json_error "error" error_msg in
           let compile_error_to_json_error (e: exn) =
@@ -22,9 +22,10 @@ let compile_with_json_output config =
             | Anvil.CompileHelpers.CompileError msg -> convert msg
             | e -> convert [Anvil.Except.Text ("Unhandled error detected: " ^ (Printexc.to_string e))]
            in
-          List.map compile_error_to_json_error errors
+          List.map compile_error_to_json_error parse_result.errors
         in
-        let json_result = Anvil.JsonOutput.ast_output cunits gcols json_errors in
+        let json_result = Anvil.JsonOutput.ast_output
+          parse_result.compilation_units parse_result.graph_collections json_errors in
         print_endline (Anvil.JsonOutput.json_output_to_string json_result);
         exit 0
       else ();

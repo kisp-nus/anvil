@@ -1,5 +1,11 @@
 open CompileHelpers
 
+type parse_result = {
+  compilation_units : (string * Lang.compilation_unit) list;
+  graph_collections : (string * EventGraph.event_graph_collection) list;
+  errors : exn list;
+}
+
 (* Compilation steps *)
 
 (** Parses the input files and returns a list of compilation units. Raises CompileError if any error is encountered. *)
@@ -200,7 +206,11 @@ let parse config =
     | e -> e
   in
 
-  cunits, graph_collections, List.map mapped collected_errors
+  {
+    compilation_units = cunits;
+    graph_collections;
+    errors = List.map mapped collected_errors;
+  }
 
 
 (** Performs the end-to-end compilation process, including parsing, checking, and code generation,
