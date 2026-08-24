@@ -6,7 +6,7 @@ open AstJsonSerializerHelpers
 let ast_major_version = 0 (* incr w/ breaking changes *)
 let ast_minor_version = 1 (* incr w/ non-breaking additions *)
 let ast_patch_version = 0 (* incr w/ non-breaking bug fixes *)
-let ast_wip_build = 3 (* incr w/ each build while in wip state; set to 0 when finalized *)
+let ast_wip_build = 0 (* incr w/ each build while in wip state; set to 0 when finalized *)
 
 let ast_json_schema_version_string =
   let wip_str = if ast_wip_build > 0 then Printf.sprintf "-wip.%d" ast_wip_build else "" in
