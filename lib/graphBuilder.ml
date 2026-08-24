@@ -1,6 +1,7 @@
 open EventGraph
 open EventGraphOps
 open Lang
+open ErrorCollector
 open GraphBuildContext
 open DataTypeCheck
 
@@ -10,8 +11,7 @@ module BuildContext = Typing.BuildContext
 let unwrap_or_err err_msg err_span opt =
   match opt with
   | Some d -> d
-  | None -> raise (event_graph_error_default err_msg err_span)
-
+  | None -> raise_fatal (event_graph_error_default err_msg err_span)
 
 let binop_td_const graph (ci:cunit_info) _ctx span op n td =
   let w = unwrap_or_err "Invalid value" span td.ld.w in
@@ -58,21 +58,23 @@ let binop_td_td graph (ci:cunit_info) ctx span op td1 td2 =
   Typing.merged_data graph (Some wres) new_dtype ctx.current [td1.ld; td2.ld]
 
 
-let rec lvalue_info_of graph (ci:cunit_info) ctx span lval =
+let rec lvalue_info_of graph (ci:cunit_info) ctx (e:expr_node) lval =
+  let span = e.span in
   let binop_td_const = binop_td_const graph ci ctx span
   and binop_td_td = binop_td_td graph ci ctx span in
   match lval with
   | Reg ident ->
     let r = Utils.StringMap.find_opt ident graph.regs
       |> unwrap_or_err ("Undefined register " ^ ident) span in
-    let sz = TypedefMap.data_type_size ci.typedefs ci.macro_defs r.d_type in
+    let sz = TypedefMap.data_type_size ci.typedefs ci.macro_defs r.d.d_type in
+    AstAnnotator.attach_def_span_expr e r;
     {
       lval_range = full_reg_range ident sz;
-      lval_dtype = r.d_type
+      lval_dtype = r.d.d_type
     }
   | Indexed (lval', idx) ->
     (* TODO: better code reuse *)
-    let lval_info' = lvalue_info_of graph ci ctx span lval' in
+    let lval_info' = lvalue_info_of graph ci ctx e lval' in
     let (le', _len') = lval_info'.lval_range.subreg_range_interval in
     let (le, len, dtype) =
       TypedefMap.data_type_index ci.typedefs ci.macro_defs
@@ -84,19 +86,32 @@ let rec lvalue_info_of graph (ci:cunit_info) ctx span lval =
     let le_n = MaybeConst.map (fun nd -> nd.ld)
       (MaybeConst.add (binop_td_const Add) (binop_td_td Add) le'_nd le)
     in
+    (
+      let type_def = TypedefMap.type_def_name_resolve ci.typedefs dtype in
+      match type_def with
+      | Some type_def -> AstAnnotator.attach_def_from_top_level_type e type_def
+      | None -> ()
+    );
     {
       lval_range = {lval_info'.lval_range with subreg_range_interval = (le_n, len)};
       lval_dtype = dtype
     }
   | Indirected (lval', fieldname) ->
-    let lval_info' = lvalue_info_of graph ci ctx span lval' in
+    let lval_info' = lvalue_info_of graph ci ctx e lval' in
     let (le', _len') = lval_info'.lval_range.subreg_range_interval in
-    let (le, len, dtype) = TypedefMap.data_type_indirect ci.typedefs ci.macro_defs lval_info'.lval_dtype fieldname
-      |> unwrap_or_err ("Invalid lvalue indirection through field " ^ fieldname) span in
+    let (le, len, dtype) = TypedefMap.data_type_indirect ci.typedefs ci.macro_defs lval_info'.lval_dtype fieldname.d
+      |> unwrap_or_err ("Invalid lvalue indirection through field " ^ fieldname.d) span in
     let le'_nd = MaybeConst.map (fun ld -> {ld}) le' in
     let le_n = MaybeConst.map (fun nd -> nd.ld)
       (MaybeConst.add_const le (binop_td_const Add) le'_nd)
     in
+    (
+      let type_def = TypedefMap.type_def_name_resolve ci.typedefs dtype in (
+        match type_def with
+        | Some type_def -> AstAnnotator.attach_def_from_top_level_type_with_fields e type_def [(fieldname.d, fieldname)]
+        | None -> ()
+      );
+    );
     {
       lval_range = {lval_info'.lval_range with subreg_range_interval = (le_n, len)};
       lval_dtype = dtype
@@ -119,16 +134,22 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
     )
   | Identifier ident ->
       let ctx_val = Typing.context_lookup ctx.cg_lt_ctx ident in
-      let macro_val = List.assoc_opt ident (List.map (fun (macro : macro_def) ->(macro.id, macro.value)) ci.macro_defs) in
+      let macro_val = List.assoc_opt ident (List.map (fun (macro : macro_def) ->(macro.id, macro)) ci.macro_defs) in
       (match ctx_val, macro_val with
-        | Some _, Some _ ->
-          raise (event_graph_error_default ("Conflicting Identifier " ^ ident ^ " declarations found") e.span)
-        | Some binding, None -> Typing.use_binding binding |> Typing.sync_data graph ctx.current
-        | None, Some value ->
-          let sz = Utils.int_log2 (value + 1) in
+        | Some a, Some b_def ->
+          AstAnnotator.attach_def_span e a.binding_def_span;
+          AstAnnotator.attach_def_from_top_level_macro e b_def;
+          raise (event_graph_error_default ("Conflicting Identifier " ^ ident ^ " declarations found") e.span);
+          Typing.const_data graph None (unit_dtype) ctx.current (* dummy return *)
+        | Some binding, None ->
+          AstAnnotator.attach_def_span e binding.binding_def_span;
+          Typing.use_binding binding |> Typing.sync_data graph ctx.current
+        | None, Some macro ->
+          AstAnnotator.attach_def_from_top_level_macro e macro;
+          let sz = Utils.int_log2 (macro.value + 1) in
           let (wires', w) = WireCollection.add_literal graph.thread_id
               ci.typedefs ci.macro_defs
-              (WithLength (sz, value)) graph.wires in
+              (WithLength (sz, macro.value)) graph.wires in
             graph.wires <- wires';
             Typing.const_data graph (Some w) (`Array (`Logic, ParamEnv.Concrete sz)) ctx.current
         | None, None ->
@@ -139,19 +160,21 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
 
   | Assign (lval, e') ->
     let td = construct_graphIR graph ci ctx e' in
-    let lvi = lvalue_info_of graph ci ctx e.span lval in
+    let lvi = lvalue_info_of graph ci ctx e lval in
     let err_string = DTypeCheck.fmt_assign lval lvi.lval_dtype td.ld.dtype in
     check_dtype err_string (Some lvi.lval_dtype) td.ld.dtype e.span ci.file_name ci.weak_typecasts ci.typedefs ci.macro_defs;
     ctx.current.actions <- (RegAssign (lvi, td.ld) |> tag_with_span e.span)::ctx.current.actions;
+    AstAnnotator.attach_event e ctx.current None (Some [DelayConst 1]);
     Typing.cycles_data graph 1 ctx.current
   | Call (id, arg_list) ->
       let func = List.find_opt (fun (f: Lang.func_def) -> f.name = id) ci.func_defs
         |> unwrap_or_err ("Undefined function: " ^ id) e.span in
+      AstAnnotator.attach_def_from_top_level_func e func;
       let td_args = List.map (construct_graphIR graph ci ctx) arg_list in
       let ctx' = BuildContext.clear_bindings ctx |> ref in
       if List.length td_args <> List.length func.args then
-        raise (event_graph_error_default "Arguments missing in function call" e.span);
-        List.iter2 (fun td arg ->
+        raise (event_graph_error_default "Arguments missing in function call" e.span)
+      else List.iter2 (fun td arg ->
         (
           let _ = td.ld.w in (* added for tc*)
           match arg.arg_type with
@@ -160,7 +183,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
               check_dtype err_string (Some gtype) td.ld.dtype e.span ci.file_name ci.weak_typecasts ci.typedefs ci.macro_defs;
             | None -> ()
         );
-        ctx' := BuildContext.add_binding !ctx' arg.arg_name td.ld
+        ctx' := BuildContext.add_binding !ctx' arg.arg_name td.ld e.span
       ) td_args func.args;
       construct_graphIR graph ci !ctx' func.body
   | Binop (binop, e1, e2) ->
@@ -205,7 +228,8 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
     Typing.derived_data (Some w) td.ld
   | Tuple [] -> Typing.const_data graph None (unit_dtype) ctx.current
   | Let (_idents, _, e) ->
-    raise (Except.TypeError [Text "Let expressions cannot be unused!"; Except.codespan_local e.span])
+    raise (Except.TypeError [Text "Let expressions cannot be unused!"; Except.codespan_local e.span]);
+    Typing.const_data graph None (unit_dtype) ctx.current (* dummy return *)
   | Join (e1, e2) ->
     (
       match e1.d with
@@ -227,7 +251,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
           let td1 = construct_graphIR graph ci ctx inner_e in
           let err_string = DTypeCheck.fmt_let_binding ident dtype td1.ld.dtype in
           check_dtype err_string dtype td1.ld.dtype e1.span ci.file_name ci.weak_typecasts ci.typedefs ci.macro_defs;
-          let ctx' = BuildContext.add_binding ctx ident td1.ld in
+          let ctx' = BuildContext.add_binding ctx ident td1.ld e1.span in
           let td = construct_graphIR graph ci ctx' e2 in
           (* check if the binding is used *)
           let binding = Typing.context_lookup ctx'.cg_lt_ctx ident |> Option.get in
@@ -239,7 +263,9 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
           ;
           );
           td
-      | Let _ -> raise (event_graph_error_default "Discarding expression results!" e.span)
+      | Let _ ->
+        raise (event_graph_error_default "Discarding expression results!" e.span);
+        Typing.const_data graph None (unit_dtype) ctx.current (* dummy return *)
       | _ ->
         let td1 = construct_graphIR graph ci ctx e1 in
         let td = construct_graphIR graph ci ctx e2 in
@@ -267,17 +293,21 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
         check_dtype err_string dtype td1.ld.dtype e.span ci.file_name ci.weak_typecasts ci.typedefs ci.macro_defs;
         (* add the binding to the context *)
         let ctx' = BuildContext.wait graph ctx td1.ld.lt.live in
-        let ctx' = BuildContext.add_binding ctx' ident td1.ld in
+        let ctx' = BuildContext.add_binding ctx' ident td1.ld e1.span in
         construct_graphIR graph ci ctx' e2
-      | Let _ -> raise (event_graph_error_default "Discarding expression results!" e.span)
+      | Let _ ->
+        raise (event_graph_error_default "Discarding expression results!" e.span);
+        Typing.const_data graph None (unit_dtype) ctx.current (* dummy return *)
       | _ ->
         let td1 = construct_graphIR graph ci ctx e1 in
         let ctx' = BuildContext.wait graph ctx td1.ld.lt.live in
         construct_graphIR graph ci ctx' e2
     )
   | Ready msg_spec ->
-    let _ = MessageCollection.lookup_message graph.messages msg_spec ci.channel_classes
+    let msg = MessageCollection.lookup_message graph.messages msg_spec ci.channel_classes
       |> unwrap_or_err "Invalid message specifier in ready" e.span in
+    AstAnnotator.attach_def_from_top_level_message e msg msg_spec graph;
+    AstAnnotator.attach_event e ctx.current None None;
     (* if msg.dir <> In then (
       (* mismatching direction *)
       raise (event_graph_error_default "Mismatching message direction!" e.span)
@@ -286,12 +316,17 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
     graph.wires <- wires;
     Typing.immediate_data graph (Some msg_valid_port) `Logic ctx.current
   | Probe msg_spec ->
-    let _ = MessageCollection.lookup_message graph.messages msg_spec ci.channel_classes
+    let msg = MessageCollection.lookup_message graph.messages msg_spec ci.channel_classes
     |> unwrap_or_err "Invalid message specifier in probe" e.span in
+    AstAnnotator.attach_def_from_top_level_message e msg msg_spec graph;
+    AstAnnotator.attach_event e ctx.current None None;
     let wires, msg_ack_port = WireCollection.add_msg_ack_port graph.thread_id ci.typedefs msg_spec graph.wires in
     graph.wires <- wires;
     Typing.immediate_data graph (Some msg_ack_port) `Logic ctx.current
-  | Cycle n -> Typing.cycles_data graph n ctx.current
+  | Cycle n ->
+    let data = Typing.cycles_data graph n ctx.current in
+    AstAnnotator.attach_event e ctx.current None (Some [DelayConst n]);
+    data
   | IfExpr (e1, e2, e3) ->
     let td1 = construct_graphIR graph ci ctx e1 in
     (* TODO: type checking *)
@@ -314,6 +349,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
     branch_info.branches_val <- [td2.ld.lt.live; td3.ld.lt.live];
 
     BuildContext.branch_merge ctx' [ctx_true; ctx_false];
+    AstAnnotator.attach_event e ctx.current None None;
 
     let ctx_br = BuildContext.branch graph ctx' branch_info in
     br_side_true.branch_event <- Some ctx_br.current;
@@ -329,7 +365,9 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
         let (wires', w) = WireCollection.add_switch graph.thread_id ci.typedefs [(w1, w2)] w3 graph.wires in
         graph.wires <- wires';
         {ld = {w = Some w; lt; reg_borrows = reg_borrows'; dtype = td2.ld.dtype}}
-      | _ -> raise (event_graph_error_default "Invalid if expression!" e.span)
+      | _ ->
+        raise (event_graph_error_default "Invalid if expression!" e.span);
+        Typing.const_data graph None (unit_dtype) ctx.current (* dummy return *)
     )
   | TrySend (send_pack, e1, e2) ->
     (* data to send *)
@@ -371,6 +409,14 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
     BuildContext.branch_merge ctx [ctx_true; ctx_false];
 
     ctx_true.current.actions <- (ImmediateSend (send_pack.send_msg_spec, td_send_data.ld) |> tag_with_span e.span)::ctx_true.current.actions;
+    AstAnnotator.attach_event e ctx_true.current None None;
+
+    (
+      try let msg = MessageCollection.lookup_message graph.messages send_pack.send_msg_spec ci.channel_classes
+        |> unwrap_or_err "Invalid message specifier in try send" e.span
+      in AstAnnotator.attach_def_from_top_level_message e msg send_pack.send_msg_spec graph;
+      with _ -> ()
+    );
 
     let ctx_br = BuildContext.branch graph ctx branch_info in
     br_side_true.branch_event <- Some ctx_br.current;
@@ -386,7 +432,9 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
         let (wires', w) = WireCollection.add_switch graph.thread_id ci.typedefs [(w_cond, w1)] w2 graph.wires in
         graph.wires <- wires';
         {ld = {w = Some w; lt; reg_borrows = reg_borrows'; dtype = td2.ld.dtype}}
-      | _ -> raise (event_graph_error_default "Invalid try send expression!" e.span)
+      | _ ->
+        raise (event_graph_error_default "Invalid try send expression!" e.span);
+        Typing.const_data graph None (unit_dtype) ctx.current (* dummy return *)
     )
   | TryRecv (ident, recv_pack, e1, e2) ->
     let wires, w_cond = WireCollection.add_msg_valid_port graph.thread_id ci.typedefs recv_pack.recv_msg_spec graph.wires in
@@ -422,7 +470,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
       reg_borrows = [];
       dtype = stype.dtype;
     } in
-    let ctx_true = BuildContext.add_binding ctx_true_no_binding ident td_recv in
+    let ctx_true = BuildContext.add_binding ctx_true_no_binding ident td_recv e1.span in
     let td1 = construct_graphIR graph ci ctx_true e1 in
     let (br_side_false, ctx_false) = BuildContext.branch_side graph ctx branch_info 1 in
     let td2 = construct_graphIR graph ci ctx_false e2 in
@@ -432,7 +480,10 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
 
     BuildContext.branch_merge ctx [ctx_true_no_binding; ctx_false];
 
-    ctx_true.current.actions <- (ImmediateRecv recv_pack.recv_msg_spec |> tag_with_span e.span)::ctx_true.current.actions;
+    let action = ImmediateRecv recv_pack.recv_msg_spec |> tag_with_span e.span in
+    ctx_true.current.actions <- action::ctx_true.current.actions;
+    AstAnnotator.attach_event e ctx_true.current None None;
+    AstAnnotator.attach_def_from_top_level_message e msg recv_pack.recv_msg_spec graph;
 
     let ctx_br = BuildContext.branch graph ctx branch_info in
     br_side_true.branch_event <- Some ctx_br.current;
@@ -448,7 +499,9 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
         let (wires', w) = WireCollection.add_switch graph.thread_id ci.typedefs [(w_cond, w1)] w2 graph.wires in
         graph.wires <- wires';
         {ld = {w = Some w; lt; reg_borrows = reg_borrows'; dtype = td2.ld.dtype}}
-      | _ -> raise (event_graph_error_default "Invalid try recv expression!" e.span)
+      | _ ->
+        raise (event_graph_error_default "Invalid try recv expression!" e.span);
+        Typing.const_data graph None (unit_dtype) ctx.current (* dummy return *)
     )
 
   | Match (match_v, match_arms) ->
@@ -516,12 +569,14 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
           {ld = {w = None; lt; reg_borrows = reg_borrows'; dtype = unit_dtype}}
         else (
           let (wires', w) = WireCollection.add_cases graph.thread_id ci.typedefs w_v
-            (List.map2 (fun td_pat (_, _, td_val) -> (Option.get td_pat.ld.w, Option.get td_val.ld.w)) td_pats branches) (match td_default.ld.w with | Some w -> w | None -> raise (event_graph_error_default "Invalid match expression (exactly one default case expected)!" e.span))
+            (List.map2 (fun td_pat (_, _, td_val) -> (Option.get td_pat.ld.w, Option.get td_val.ld.w)) td_pats branches) (match td_default.ld.w with | Some w -> w | None -> raise_fatal (event_graph_error_default "Invalid match expression (exactly one default case expected)!" e.span))
             graph.wires in
           graph.wires <- wires';
           {ld = {w = Some w; lt; reg_borrows = reg_borrows'; dtype = td_default.ld.dtype}}
         )
-      | _ -> raise @@ event_graph_error_default "Invalid match expression (atleast one default case expected)!" e.span
+      | _ ->
+          raise @@ event_graph_error_default "Invalid match expression (atleast one default case expected)!" e.span;
+          Typing.const_data graph None (unit_dtype) ctx.current (* dummy return *)
     )
   | Cast (e', dtype) ->
     let td = construct_graphIR graph ci ctx e' in
@@ -557,19 +612,28 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
       | false -> `Array (List.hd tdtype, ParamEnv.Concrete (List.length es))
       | _ -> `Array (`Logic, ParamEnv.Concrete (w.size))
     ) in
+    AstAnnotator.attach_event e ctx.current None None;
     List.map (fun (_,td) -> td.ld) tds |> Typing.merged_data graph (Some w) new_dtype ctx.current
   |  Read rlval ->
     let reg_ident = Lang.get_lvalue_reg_id rlval in
     let r = Utils.StringMap.find_opt reg_ident graph.regs
-      |> unwrap_or_err ("Undefined register " ^ reg_ident) e.span in    
-    let (wires'', w'') = WireCollection.add_reg_read graph.thread_id ci.typedefs ci.macro_defs r graph.wires in
+      |> unwrap_or_err ("Undefined register " ^ reg_ident) e.span in
+    AstAnnotator.attach_def_span_expr e r;
+    let (wires'', w'') = WireCollection.add_reg_read graph.thread_id ci.typedefs ci.macro_defs r.d graph.wires in
     graph.wires <- wires'';
-    let td = {ld = {w = Some w''; lt = EventGraphOps.lifetime_const ctx.current; reg_borrows = []; dtype = r.d_type}} in
+    let td = {ld = {w = Some w''; lt = EventGraphOps.lifetime_const ctx.current; reg_borrows = []; dtype = r.d.d_type}} in
     let get_borrow_info in_off le dt w lval td' =
       match lval with 
         | Reg _ -> (dt,in_off,le,w,td')
         | Indexed (lv, idx) ->
-          let inner_info = lvalue_info_of graph ci ctx e.span lv in
+          let inner_info = lvalue_info_of graph ci ctx e lv in
+          (
+            let type_def = TypedefMap.type_def_name_resolve ci.typedefs inner_info.lval_dtype in
+            match type_def with
+            | Some type_def ->
+                AstAnnotator.attach_def_from_top_level_type e type_def
+            | None -> ()
+          );
           let inner_le = fst inner_info.lval_range.subreg_range_interval in
           let inner_le_nd = MaybeConst.map (fun ld -> {ld}) inner_le in
           let inner_dtype = inner_info.lval_dtype in
@@ -591,16 +655,23 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
           in
           (dt', off, le', w', new_td)
         | Indirected (lval_inner, field_id) -> 
-          let lval_info_inner = lvalue_info_of graph ci ctx e.span lval_inner in
+          let lval_info_inner = lvalue_info_of graph ci ctx e lval_inner in
+          (
+            let type_def = TypedefMap.type_def_name_resolve ci.typedefs lval_info_inner.lval_dtype in
+            match type_def with
+            | Some type_def ->
+                AstAnnotator.attach_def_from_top_level_type_with_fields e type_def [(field_id.d, field_id)]
+            | None -> ()
+          );
           let (inner_le, _inner_len) = lval_info_inner.lval_range.subreg_range_interval in
           let inner_le_nd = MaybeConst.map (fun ld -> {ld}) inner_le in
-          let (field_offset_le, len, new_dtype) = TypedefMap.data_type_indirect ci.typedefs ci.macro_defs lval_info_inner.lval_dtype field_id
-            |> unwrap_or_err (Printf.sprintf "Invalid indirection %s" field_id) e.span in
+          let (field_offset_le, len, new_dtype) = TypedefMap.data_type_indirect ci.typedefs ci.macro_defs lval_info_inner.lval_dtype field_id.d
+            |> unwrap_or_err (Printf.sprintf "Invalid indirection %s" field_id.d) e.span in
           (* total offset = inner offset + field offset *)
           let total_offset_le = MaybeConst.add_const field_offset_le (binop_td_const e.span Add) inner_le_nd in
           let off_i = MaybeConst.map_off total_offset_le in
           let (off, le') = if off_i < 0 then (
-            Printf.eprintf "[Warning] The offset is not a constant value for indirection %s, borrowing full range\n" field_id;
+            Printf.eprintf "[Warning] The offset is not a constant value for indirection %s, borrowing full range\n" field_id.d;
             (0, len)
           ) else (off_i, len) in
           let (wi', new_w) = WireCollection.add_slice graph.thread_id w (MaybeConst.map (fun td -> unwrap_or_err "Invalid indexing in indirection" e.span td.ld.w) total_offset_le) le' graph.wires in
@@ -611,8 +682,8 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
           in
           (new_dtype, off, le', new_w, new_td)
     in
-    let full_sz = TypedefMap.data_type_size ci.typedefs ci.macro_defs r.d_type in
-    let (_dt,off,le,_w,td'') = get_borrow_info 0 full_sz r.d_type w'' rlval td in
+    let full_sz = TypedefMap.data_type_size ci.typedefs ci.macro_defs r.d.d_type in
+    let (_dt,off,le,_w,td'') = get_borrow_info 0 full_sz r.d.d_type w'' rlval td in
     let borrow = {borrow_range = sub_reg_range reg_ident off le; borrow_start = ctx.current; borrow_source_span = e.span} in
     {ld = { td''.ld with dtype = _dt; reg_borrows = borrow :: td''.ld.reg_borrows }}
   | Debug op ->
@@ -629,9 +700,11 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
         if not all_w then
           raise (Except.TypeError [Text "Invalid value in debug print"; Except.codespan_local e.span]);
         ctx.current.actions <- (let open EventGraph in DebugPrint (s, List.map (fun td -> td.ld) timed_ws) |> tag_with_span e.span)::ctx.current.actions;
+        AstAnnotator.attach_event e ctx.current None None;
         {ld = {w = None; lt = EventGraphOps.lifetime_const ctx.current; reg_borrows = []; dtype = unit_dtype}}
       | DebugFinish ->
         ctx.current.actions <- (let open EventGraph in tag_with_span e.span DebugFinish)::ctx.current.actions;
+        AstAnnotator.attach_event e ctx.current None None;
         {ld = {w = None; lt = EventGraphOps.lifetime_const ctx.current; reg_borrows = []; dtype = unit_dtype}}
     )
   | Send send_pack ->
@@ -641,6 +714,9 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
       raise (event_graph_error_default (Printf.sprintf "Endpoint %s not owned by the process" ep) e.span);
     let msg = MessageCollection.lookup_message graph.messages send_pack.send_msg_spec ci.channel_classes
       |> unwrap_or_err "Invalid message specifier in send" e.span in
+
+    AstAnnotator.attach_def_from_top_level_message e msg send_pack.send_msg_spec graph;
+
     if msg.dir <> Out then (
       (* mismatching direction *)
       raise (event_graph_error_default "Mismatching message direction!" e.span)
@@ -655,13 +731,18 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
         until = ntd.ld.lt.live;
         ty = Send (send_pack.send_msg_spec, td.ld)
       } |> tag_with_span e.span)::ctx.current.sustained_actions;
+    AstAnnotator.attach_event e ctx.current (Some ntd.ld.lt.live) None;
     ntd
+
   | Recv recv_pack ->
     let ep  = recv_pack.recv_msg_spec.endpoint in
     if not (MessageCollection.endpoint_owned graph.messages ep) then
       raise (event_graph_error_default (Printf.sprintf "Endpoint %s not owned by the process" ep) e.span);
     let msg = MessageCollection.lookup_message graph.messages recv_pack.recv_msg_spec ci.channel_classes
       |> unwrap_or_err "Invalid message specifier in receive" e.span in
+
+    AstAnnotator.attach_def_from_top_level_message e msg recv_pack.recv_msg_spec graph;
+
     if msg.dir <> Inp then (
       (* mismatching direction *)
       raise (event_graph_error_default "Mismatching message direction!" e.span)
@@ -671,12 +752,21 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
     let ntd = Typing.recv_msg_data graph w recv_pack.recv_msg_spec msg ctx.current in
     ctx.current.sustained_actions <-
       ({until = ntd.ld.lt.live; ty = Recv recv_pack.recv_msg_spec} |> tag_with_span e.span)::ctx.current.sustained_actions;
+    AstAnnotator.attach_event e ctx.current (Some ntd.ld.lt.live) None;
     ntd
+
   | Indirect (e', fieldname) ->
     let td = construct_graphIR graph ci ctx e' in
+    (
+      let type_def = TypedefMap.type_def_name_resolve ci.typedefs td.ld.dtype in
+      match type_def with
+      | Some type_def ->
+          AstAnnotator.attach_def_from_top_level_type_with_fields e' type_def [(fieldname.d, fieldname)]
+      | None -> ()
+    );
     let w = unwrap_or_err "Invalid value in indirection" e'.span td.ld.w in
-    let (offset_le, len, new_dtype) = TypedefMap.data_type_indirect ci.typedefs ci.macro_defs td.ld.dtype fieldname
-      |> unwrap_or_err (Printf.sprintf "Invalid indirection %s" fieldname) e.span in
+    let (offset_le, len, new_dtype) = TypedefMap.data_type_indirect ci.typedefs ci.macro_defs td.ld.dtype fieldname.d
+      |> unwrap_or_err (Printf.sprintf "Invalid indirection %s" fieldname.d) e.span in
     let (wires', new_w) = WireCollection.add_slice graph.thread_id w (Const offset_le) len graph.wires in
     graph.wires <- wires';
     {ld = {
@@ -706,12 +796,22 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
     )
   | Record (record_ty_name, field_exprs, None) ->
     (
+      match TypedefMap.type_def_name_resolve ci.typedefs @@ `Named (record_ty_name, []) with
+      | Some type_def ->
+          let field_exprs_flattened = List.map (fun ({d = (ident, _); _} as n) -> (ident, n)) field_exprs in
+          AstAnnotator.attach_def_from_top_level_type_with_fields e type_def field_exprs_flattened
+      | None -> ()
+    );
+
+    (
       match TypedefMap.data_type_name_resolve ci.typedefs @@ `Named (record_ty_name, []) with
       | Some (`Record record_fields) ->
         (
-          match Utils.list_match_reorder (List.map fst record_fields) field_exprs with
+          match Utils.list_match_reorder
+            (List.map (fun n -> fst n.d) record_fields)
+            (List.map (fun n -> n.d) field_exprs) with
           | Some expr_reordered ->
-            let tds = List.map2 (fun (field_name, expected_dtype) e' ->
+            let tds = List.map2 (fun {d = (field_name, expected_dtype); _} e' ->
               let td = construct_graphIR graph ci ctx e' in
               let err_string = DTypeCheck.fmt_record_field field_name expected_dtype td.ld.dtype in
               check_dtype err_string (Some expected_dtype) td.ld.dtype e'.span ci.file_name ci.weak_typecasts ci.typedefs ci.macro_defs;
@@ -722,21 +822,33 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
             let (wires', w) = WireCollection.add_concat graph.thread_id ci.typedefs ci.macro_defs ws graph.wires in
             graph.wires <- wires';
             List.map (fun (_, td) -> td.ld) tds |> Typing.merged_data graph (Some w) (`Named (record_ty_name, [])) ctx.current
-          | _ -> raise (event_graph_error_default "Invalid record type value!" e.span)
+          | _ ->
+            raise (event_graph_error_default "Invalid record type value!" e.span);
+            Typing.const_data graph None (unit_dtype) ctx.current (* dummy return *)
         )
-      | _ -> raise (event_graph_error_default "Invalid record type name!" e.span)
+      | _ ->
+          raise (event_graph_error_default "Invalid record type name!" e.span);
+          Typing.const_data graph None (unit_dtype) ctx.current (* dummy return *)
     )
   | Record (record_ty_name, field_exprs, Some field_base) ->
+      (
+        match TypedefMap.type_def_name_resolve ci.typedefs @@ `Named (record_ty_name, []) with
+        | Some type_def ->
+            let field_exprs_flattened = List.map (fun ({d = (ident, _); _} as n) -> (ident, n)) field_exprs in
+            AstAnnotator.attach_def_from_top_level_type_with_fields e type_def field_exprs_flattened
+        | None -> ()
+      );
+
       (* record update *)
       let td_base = construct_graphIR graph ci ctx field_base in
-      let tds = List.map (fun (field_ident, e') -> (field_ident, e', construct_graphIR graph ci ctx e')) field_exprs in
+      let tds = List.map (fun {d = (field_ident, e'); _} -> (field_ident, e', construct_graphIR graph ci ctx e')) field_exprs in
       let updates =
         (* bruteforce *)
         List.map (fun (field_ident, _e', td) ->
           match TypedefMap.data_type_indirect ci.typedefs ci.macro_defs (`Named (record_ty_name, [])) field_ident with
           | None -> 
             let err_string = Printf.sprintf "In record update: Invalid field %s for record type %s" field_ident record_ty_name in
-             raise (event_graph_error_default err_string e.span)
+             raise_fatal (event_graph_error_default err_string e.span)
           | Some (offset_le, len, _dtype) -> (offset_le, len, Option.get td.ld.w)
         ) tds in
       let (wires', w) = WireCollection.add_update graph.thread_id ci.typedefs (Option.get td_base.ld.w) updates graph.wires in
@@ -744,10 +856,15 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
       Typing.merged_data graph (Some w) (`Named (record_ty_name, [])) ctx.current (td_base.ld::(List.map (fun (_, _, td) -> td.ld) tds))
   | Construct (cstr_spec, cstr_expr_opt) ->
     (
+      match TypedefMap.type_def_name_resolve ci.typedefs @@ `Named (cstr_spec.variant_ty_name, []) with
+      | Some type_def -> AstAnnotator.attach_def_from_top_level_type_with_fields e type_def [(cstr_spec.variant.d, cstr_spec.variant)]
+      | None -> ()
+    );
+    (
       match TypedefMap.data_type_name_resolve ci.typedefs @@ `Named (cstr_spec.variant_ty_name, []) with
       | Some (`Variant (dtype_opt, variants)) ->
         let variant_val = `Variant (dtype_opt, variants) in
-        let e_dtype_opt = variant_lookup_dtype variant_val cstr_spec.variant in
+        let e_dtype_opt = variant_lookup_dtype variant_val cstr_spec.variant.d in
         (
           match e_dtype_opt, cstr_expr_opt with
           | Some e_dtype, Some cstr_expr ->
@@ -758,8 +875,8 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
             let tag_size = variant_tag_size variant_val
             and data_size = TypedefMap.data_type_size ci.typedefs ci.macro_defs e_dtype
             and tot_size = TypedefMap.data_type_size ci.typedefs ci.macro_defs variant_val
-            and var_idx = variant_lookup_index variant_val cstr_spec.variant
-              |> unwrap_or_err ("Invalid constructor: " ^ cstr_spec.variant) e.span in
+            and var_idx = variant_lookup_index variant_val cstr_spec.variant.d
+              |> unwrap_or_err ("Invalid constructor: " ^ cstr_spec.variant.d) e.span in
             let (wires', w_tag) = WireCollection.add_literal graph.thread_id ci.typedefs ci.macro_defs
               (WithLength (tag_size, var_idx)) graph.wires in
             let (wires', new_w) = if tot_size = tag_size + data_size then
@@ -776,8 +893,8 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
           | None, None ->
             let tag_size = variant_tag_size variant_val
             and tot_size = TypedefMap.data_type_size ci.typedefs ci.macro_defs variant_val
-            and var_idx = variant_lookup_index variant_val cstr_spec.variant
-              |> unwrap_or_err ("Invalid constructor: " ^ cstr_spec.variant) e.span in
+            and var_idx = variant_lookup_index variant_val cstr_spec.variant.d
+              |> unwrap_or_err ("Invalid constructor: " ^ cstr_spec.variant.d) e.span in
             let (wires', w_tag) = WireCollection.add_literal graph.thread_id ci.typedefs ci.macro_defs
               (WithLength (tag_size, var_idx)) graph.wires in
             let (wires', new_w) = if tot_size = tag_size then
@@ -789,9 +906,13 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
             end in
             graph.wires <- wires';
             Typing.const_data graph (Some new_w)  (`Named (cstr_spec.variant_ty_name, [])) ctx.current
-          | _ -> raise (event_graph_error_default "Invalid variant construct expression!" e.span)
+          | _ ->
+            raise (event_graph_error_default "Invalid variant construct expression!" e.span);
+            Typing.const_data graph None (unit_dtype) ctx.current (* dummy return *)
         )
-      | _ -> raise (event_graph_error_default "Invalid variant type name!" e.span)
+      | _ ->
+        raise (event_graph_error_default "Invalid variant type name!" e.span);
+        Typing.const_data graph None (unit_dtype) ctx.current (* dummy return *)
     )
   | SharedAssign (id, value_expr) ->
     let shared_info = Hashtbl.find_opt ctx.shared_vars_info id
@@ -819,9 +940,10 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
         shared_info.assigned_at <- Some ctx.current;
       );
       ctx.current.actions <- (PutShared (id, shared_info, value_td.ld) |> tag_with_span e.span)::ctx.current.actions;
-      Typing.const_data graph None (unit_dtype) ctx.current
+      AstAnnotator.attach_event e ctx.current None None;
     else
-      raise (event_graph_error_default "Shared variable assigned in wrong thread" e.span)
+      raise (event_graph_error_default "Shared variable assigned in wrong thread" e.span);
+    Typing.const_data graph None (unit_dtype) ctx.current
   | List li ->
     let tds = List.map (construct_graphIR graph ci ctx) li in
     let ws = List.map (fun td -> unwrap_or_err "Invalid wires!" e.span td.ld.w) tds in
@@ -833,6 +955,6 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
   | Recurse ->
     ctx.current.is_recurse <- true;
     Typing.const_data graph None unit_dtype ctx.current
-  | Tuple _ -> raise (event_graph_error_default "Unimplemented expression!" e.span)
-
-
+  | Tuple _ ->
+    raise (event_graph_error_default "Unimplemented expression!" e.span);
+    Typing.const_data graph None unit_dtype ctx.current (* dummy return *)

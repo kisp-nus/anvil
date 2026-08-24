@@ -1,6 +1,7 @@
 open Lang
 open EventGraph
 open GraphAnalysis
+open ErrorCollector
 
 (* Lifetime formatted string for debugging *)
 let _string_of_lt (lt : lifetime) : string =
@@ -34,9 +35,9 @@ let check_linear (config : Config.compile_config) lookup_message (g : event_grap
         | PutShared (_, _, _td) ->
           ()
         | ImmediateRecv msg ->
-          add_msg msg ev ({d = {ty = Recv msg; until = ev}; span = ac_span.span})
+          add_msg msg ev ({d = {ty = Recv msg; until = ev}; def_span = ac_span.def_span; action_event = ac_span.action_event; span = ac_span.span})
         | ImmediateSend (msg, td) ->
-          add_msg msg ev ({d = {ty = Send (msg, td); until = ev}; span = ac_span.span})
+          add_msg msg ev ({d = {ty = Send (msg, td); until = ev}; def_span = ac_span.def_span; action_event = ac_span.action_event; span = ac_span.span})
           (* add_reg_ops_td ev td *)
       ) ev.actions;
       List.iter (fun sa_span ->
@@ -131,8 +132,8 @@ let event_pat_rel2 events lookup_message ev_pat1 ev_pat2 =
       | true -> (g, offset)
 
       | false -> match ((lookup_message m): message_def option) with
-        | Some def -> raise (LifetimeCheckError [Text "Negative Offset Unsupported right now"; Except.codespan_local def.span])
-        | None -> raise (LifetimeCheckError [Text (Printf.sprintf "Message_def_not_found %s" (string_of_msg_spec m)); Except.codespan_local Lang.code_span_dummy])
+        | Some def -> raise_fatal (LifetimeCheckError [Text "Negative Offset Unsupported right now"; Except.codespan_local def.span])
+        | None -> raise_fatal (LifetimeCheckError [Text (Printf.sprintf "Message_def_not_found %s" (string_of_msg_spec m)); Except.codespan_local Lang.code_span_dummy])
   in
   match ev_pat1 with
   | [spat1] -> (
@@ -473,11 +474,11 @@ let lifetime_check (config : Config.compile_config) (ci : cunit_info) (g : event
         match ac_span.d with
         | ImmediateSend (msg', td) ->
           if (msg_ident msg') = msg then
-            Some {d = {until = ev; ty = Send (msg', td)}; span = ac_span.span }
+            Some {d = {until = ev; ty = Send (msg', td)}; def_span = ac_span.def_span; action_event = ac_span.action_event; span = ac_span.span }
           else None
         | ImmediateRecv msg' ->
           if (msg_ident msg') = msg then
-            Some {d = {until = ev; ty = Recv msg'}; span = ac_span.span }
+            Some {d = {until = ev; ty = Recv msg'}; def_span = ac_span.def_span; action_event = ac_span.action_event; span = ac_span.span }
           else None
         | _ -> None
       ) ev.actions in

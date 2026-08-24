@@ -5,7 +5,7 @@
     [trunc] specifies the truncation: [0] for no truncation, positive for truncating at the start,
     and negative for truncating to the end (keeping [trunc] lines).
  *)
-let string_of_code_span ?(indent = 2) ?(trunc = 0) span =
+let string_of_code_span ?(indent = 2) ?(trunc = 0) (span: Lang.code_span) =
   let open Lang in
   let filename = span.st.Lexing.pos_fname in
   if filename = "" then None

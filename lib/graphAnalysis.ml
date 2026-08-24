@@ -1,6 +1,7 @@
 open Lang
 open EventGraph
 open GraphBuildContext
+open ErrorCollector
 
 (* TODO: to use arrays instead of hash tables *)
 
@@ -127,7 +128,7 @@ let event_succ_distance non_succ_dist msg_dist_f later_dist_f either_dist_f even
   List.rev events |> List.iter (fun ev' ->
     if IntHashtbl.find_opt dist ev'.id |> Option.is_none then
     let d = match ev'.source with
-    | `Root None -> raise (Except.unknown_error_default "Unexpected root!")
+    | `Root None -> raise (Except.unknown_error_default "Unexpected root!"); non_succ_dist (* dummy fallback *)
     | `Later (ev1, ev2) -> later_dist_f (get_dist ev1) (get_dist ev2)
     | `Seq (ev1, ad) ->
       let d1 = get_dist ev1 in
@@ -146,7 +147,7 @@ let event_succ_distance non_succ_dist msg_dist_f later_dist_f either_dist_f even
       let first_two = either_dist_f (get_dist ev1) (get_dist ev2) in
       List.fold_left (fun v e -> either_dist_f v @@ get_dist e) first_two el
     | _ ->
-      raise (Except.unknown_error_default "Unexpected event source!")
+      raise (Except.unknown_error_default "Unexpected event source!"); non_succ_dist (* dummy fallback *)
     in
     set_dist ev' (min d event_distance_max)
   );
@@ -610,7 +611,7 @@ let rec recurse_unfold expr_full_node expr_node =
       Construct (cs, Option.map unfold e')
     | Record (ident, vs, base) ->
       Record (ident,
-        List.map (fun (i, e) -> (i, unfold e)) vs,
+        List.map (fun ({d = (i, e); _} as n) -> { n with d = (i, unfold e) }) vs,
         Option.map unfold base
       )
     | Index (e', idx) ->
@@ -657,7 +658,7 @@ let recurse_unfold_for_checks construct_graphIR ci shared_vars_info graph (expr_
   if recurse_dist = 0 then
     raise (event_graph_error_default "Recurse delay must be greater than 0!" expr_node.span);
   (* the number of times to unfold is minimum for the recurse time to first pass the end event *)
-  let unfold_times = full_dist / recurse_dist in
+  let unfold_times = full_dist / (max recurse_dist 1) in
   let cur_expr = ref expr_node in
   for _ = 1 to unfold_times do
     cur_expr := recurse_unfold !cur_expr expr_node

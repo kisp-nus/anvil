@@ -1,12 +1,13 @@
 open EventGraph
 open EventGraphOps
+open ErrorCollector
 open Lang
-
 
 module Typing = struct
   
   type 'a binding  = {
     binding_val : 'a;
+    binding_def_span: Lang.code_span;
     mutable binding_used : bool; (** if the binding has been used (to enforce relevance) *)
   }
 
@@ -40,7 +41,7 @@ module Typing = struct
       in
       let new_preds = Utils.IntSet.add (g.last_event_id + 1) new_preds in
       let n = {actions = []; sustained_actions = []; source; id = g.last_event_id + 1;
-        is_recurse = false;
+        is_recurse = false; expr_nodes = []; seq_delay_symbol = None;
         outs = []; graph = g; preds = new_preds; removed = false } in
       g.events <- n::g.events;
       g.last_event_id <- n.id;
@@ -104,8 +105,8 @@ module Typing = struct
     let e = delay_pat_globalise msg.endpoint stype.lifetime.e in
     {ld = {w; lt = {live = event_received; dead = [(event_received, e)]}; reg_borrows = []; dtype = stype.dtype}}
 
-  let context_add (ctx : lowering_data context) (v : identifier) (d : lowering_data) : lowering_data context =
-    Utils.StringMap.add v {binding_val = d; binding_used = false} ctx
+  let context_add (ctx : lowering_data context) (v : identifier) (d : lowering_data) (s : Lang.code_span) : lowering_data context =
+    Utils.StringMap.add v {binding_val = d; binding_used = false; binding_def_span = s} ctx
   let context_empty = Utils.StringMap.empty
   let context_lookup (ctx : lowering_data context) (v : identifier) = Utils.StringMap.find_opt v ctx
   (* checks if lt lives at least as long as required *)
@@ -124,8 +125,8 @@ module Typing = struct
 
     let clear_bindings (ctx : t) : t =
       {ctx with cg_lt_ctx = context_empty}
-    let add_binding (ctx : t) (v : identifier) (d : lowering_data) : t =
-      {ctx with cg_lt_ctx = context_add ctx.cg_lt_ctx v d}
+    let add_binding (ctx : t) (v : identifier) (d : lowering_data) (s : Lang.code_span) : t =
+      {ctx with cg_lt_ctx = context_add ctx.cg_lt_ctx v d s}
     let wait g (ctx : t) (other : event) : t =
       {ctx with current = event_create g (`Later (ctx.current, other))}
 

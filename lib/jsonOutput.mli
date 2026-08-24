@@ -27,16 +27,20 @@ type json_output = {
   success: bool;
   errors: json_error list;
   output: string option;
+  ast: Yojson.Safe.t option;
 }
 
-(** Convert error message to JSON errors *)
-val error_message_to_json_errors : string -> Except.error_message -> json_error list
+(** Converts an error message to JSON errors *)
+val error_message_to_json_error : string -> Except.error_message -> json_error
 
-(** Convert JSON output to string *)
+(** Converts a JSON output to string *)
 val json_output_to_string : json_output -> string
 
-(** Create successful JSON output *)
-val success_output : string -> json_output
+(** Creates a successful JSON output with the transpiled output string *)
+val transpiled_output : string -> json_output
 
-(** Create failed JSON output *)
+(** Creates a successful JSON output with the resulting AST in Yojson format *)
+val ast_output : (string * Lang.compilation_unit) list -> (string * EventGraph.event_graph_collection) list -> json_error list -> json_output
+
+(** Creates a failed JSON output using the list of JSON errors *)
 val failure_output : json_error list -> json_output

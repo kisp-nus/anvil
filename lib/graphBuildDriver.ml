@@ -1,6 +1,7 @@
 open Lang
 open GraphBuildContext
 open EventGraph
+open ErrorCollector
 
 (** Build, check, and optimise the event graph for a single thread body.
 
@@ -59,7 +60,7 @@ let build_proc (config : Config.compile_config) sched module_name param_values
   in
   let macro_defs_extended =
     if List.length param_values <> List.length proc.params then
-      raise (Except.TypeError [Text (Printf.sprintf "Expected %d parameters but got %d in %s instantation"
+      raise_fatal (Except.TypeError [Text (Printf.sprintf "Expected %d parameters but got %d in %s instantation"
         (List.length proc.params) (List.length param_values) module_name)])
     else
       List.fold_left2 (fun acc (p : Lang.param) (pval : param_value) ->
@@ -68,6 +69,7 @@ let build_proc (config : Config.compile_config) sched module_name param_values
           {
             id = p.param_name;
             value = v;
+            span = p.span;
           } :: acc
         | _ -> acc
       ) ci'.macro_defs proc.params param_values 
@@ -116,11 +118,11 @@ let build_proc (config : Config.compile_config) sched module_name param_values
           thread_id = i;
           events = [];
           wires = WireCollection.empty;
-          channels = List.map data_of_ast_node body.channels;
+          channels = body.channels;
           messages = msg_collection;
           spawns = body.spawns;
           regs = List.map (fun (reg : Lang.reg_def ast_node) ->
-                (reg.d.name, reg.d)) body.regs |> Utils.StringMap.of_list;
+                (reg.d.name, reg)) body.regs |> Utils.StringMap.of_list;
           last_event_id = -1;
           is_general_recursive = false;
           thread_codespan = e.span;
@@ -129,12 +131,12 @@ let build_proc (config : Config.compile_config) sched module_name param_values
         let g = build_thread config ci shared_vars_info GraphBuilder.construct_graphIR graph e in
         (g, reset_by)
       ) body.threads in
-      {name = module_name; extern_module = None;
+      {name = module_name; proc_def_name = proc.name; extern_module = None;
         threads = proc_threads; shared_vars_info; messages = msg_collection;
         proc_body = proc.body; spawns = List.map (fun (ident, spawn) -> (ident, spawn)) spawns}
     | Extern (extern_mod, _extern_body) ->
       let msg_collection = MessageCollection.create [] proc.args [] ci.channel_classes [] [] in
-      {name = module_name; extern_module = Some extern_mod; threads = [];
+      {name = module_name; proc_def_name = proc.name; extern_module = Some extern_mod; threads = [];
         shared_vars_info = Hashtbl.create 0; messages = msg_collection;
         proc_body = proc.body; spawns = []}
 
@@ -153,6 +155,7 @@ let build (config : Config.compile_config) sched module_name param_values (cunit
   } in
   let graphs = List.map (build_proc config sched module_name param_values ci ) cunit.procs in
   {
+    cunit_file_name = cunit.cunit_file_name;
     event_graphs = graphs;
     typedefs;
     macro_defs;

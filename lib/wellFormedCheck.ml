@@ -1,5 +1,5 @@
 open Lang
-
+open ErrorCollector
 
 (** Check AST for well-formedness *)
 let syntax_tree_precheck (_config : Config.compile_config) cunit =

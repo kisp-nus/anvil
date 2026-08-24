@@ -128,6 +128,8 @@ and event = {
   mutable outs : event list; (** the outbound edges, i.e., the events that directly depend on this event *)
   preds : Utils.int_set; (** set of predecessors, used for fast reachability query. Only used during the graph building process *)
   mutable removed : bool; (** is this event removed? (used in optimisation) *)
+  mutable expr_nodes : Lang.expr_node list; (** the AST nodes associated with this event, used for syncing event annotations on the AST *)
+  mutable seq_delay_symbol : string option; (** symbolic delay for the incoming blocking sequence edge *)
 }
 
 and branch_cond =
@@ -174,12 +176,12 @@ and event_graph = {
   thread_id : int; (** unique identifier of the looping thread *)
   mutable events : event list;
   mutable wires : WireCollection.t;
-  channels : Lang.channel_def list; (** all channel definitions.
+  channels : Lang.channel_def Lang.ast_node list; (** all channel definitions.
           Note these do not include the channels passed from outside the process *)
   messages : MessageCollection.t; (** all messages referenceable from within the process,
             including those through channels passed from outside*)
   spawns : Lang.spawn_def Lang.ast_node list;
-  regs: Lang.reg_def Utils.string_map;
+  regs: Lang.reg_def Lang.ast_node Utils.string_map;
   mutable last_event_id: int;
   thread_codespan : Lang.code_span;
   mutable is_general_recursive : bool; (** is this a general recursive graph? *)
@@ -187,7 +189,8 @@ and event_graph = {
 }
 
 type proc_graph = {
-  name: Lang.identifier;
+  name: Lang.identifier; (** concrete module name, including parameter-instance mangling *)
+  proc_def_name: Lang.identifier; (** name of the source process definition *)
   extern_module: string option;
   threads: (event_graph * Lang.message_specifier option) list;
   shared_vars_info : (Lang.identifier, shared_var_info) Hashtbl.t;
@@ -201,6 +204,7 @@ In addition to event graphs, it also includes the associated {{!typedefs}type de
 {{!channel_classes}channel class definitions}.
 *)
 type event_graph_collection = {
+  cunit_file_name : string option;
   event_graphs : proc_graph list;
   typedefs : TypedefMap.t;
   macro_defs : Lang.macro_def list;
@@ -214,4 +218,3 @@ exception EventGraphError of Except.error_message
 exception LifetimeCheckError of Except.error_message
 
 let event_graph_error_default text span = let open Except in EventGraphError [Text text; codespan_local span]
-
