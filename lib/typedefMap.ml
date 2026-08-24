@@ -41,8 +41,7 @@ let rec data_type_size (type_defs : t) (macro_defs : macro_def list) (dtype : da
       in
       ParamConcretise.concretise_dtype type_def.params params type_def.body |> data_type_size type_defs macro_defs
   | `Variant (dt,vlist) as var ->
-      let mx_data_size = List.fold_left (fun m n -> max m (
-        let (_, dt, _) = n.d in
+      let mx_data_size = List.fold_left (fun m {d = (_, dt, _); _} -> max m (
         let inner_dtype_op = dt in
         match inner_dtype_op with
         | None -> 0
@@ -50,7 +49,7 @@ let rec data_type_size (type_defs : t) (macro_defs : macro_def list) (dtype : da
       )) 0 vlist
       and tag_size = variant_tag_size var in
       let total_size = mx_data_size + tag_size in
-      let ctor_names = List.map (fun n -> let (id,_,_) = n.d in id) vlist |> String.concat ", " in
+      let ctor_names = List.map (fun {d = (id,_,_); _} -> id) vlist |> String.concat ", " in
       if Option.is_some dt then
         let dt_concrete = Option.get dt in
         let dt_size = data_type_size type_defs macro_defs dt_concrete in
@@ -74,8 +73,7 @@ let data_type_indirect (type_defs : t) (macro_defs: macro_def list) (dtype : dat
       (* find the field by fieldname *)
       let found : data_type option ref = ref None
       and offset = ref 0 in
-      let lookup = fun (node : (identifier * data_type) ast_node) ->
-        let (field, field_type) = node.d in
+      let lookup = fun ({d = (field, field_type); _} : (identifier * data_type) ast_node) ->
         if Option.is_none !found then begin
           if field = fieldname then
             found := Some field_type

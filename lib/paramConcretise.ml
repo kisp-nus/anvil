@@ -44,8 +44,7 @@ and concretise_dtype_params int_env type_env (dtype : data_type) : data_type =
       let params' = concretise_params int_env type_env params in
       `Named (ident, params')
   | `Record fields ->
-    let fields' = List.map (fun node ->
-      let (field_ident, field_dtype) = node.d in
+    let fields' = List.map (fun ({d = (field_ident, field_dtype); _} as node) ->
       let new_data = (field_ident, concretise_dtype_params int_env type_env field_dtype) in
       {
         node with d = new_data
@@ -55,9 +54,8 @@ and concretise_dtype_params int_env type_env (dtype : data_type) : data_type =
     `Record fields'
   | `Variant (dtype_opt, variants) ->
     let variants' = List.map
-            (fun node ->
-              let (var_ident, var_dtype_opt, var_val_opt) = node.d in
-              { node with d = (
+             (fun ({d = (var_ident, var_dtype_opt, var_val_opt); _} as node) ->
+               { node with d = (
                 var_ident,
                 Option.map (concretise_dtype_params int_env type_env) var_dtype_opt,
                 var_val_opt

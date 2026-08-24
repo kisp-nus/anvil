@@ -140,12 +140,12 @@ let attach_def_from_top_level_type_fields (target_fields: (Lang.identifier * 'a 
   if not !enabled then () else
 
   let record_fields = match source.body with
-    | `Record fields -> List.map (fun (n: 'c Lang.ast_node) -> (fst n.d, n)) fields
+    | `Record fields -> List.map (fun ({d = (id, _); _} as n : 'c Lang.ast_node) -> (id, n)) fields
     | _ -> []
   in
 
   let variant_fields = match source.body with
-    | `Variant (_, variants) -> List.map (fun (n: 'd Lang.ast_node) -> let id, _, _ = n.d in (id, n)) variants
+    | `Variant (_, variants) -> List.map (fun ({d = (id, _, _); _} as n : 'd Lang.ast_node) -> (id, n)) variants
     | _ -> []
   in
 

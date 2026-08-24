@@ -798,7 +798,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
     (
       match TypedefMap.type_def_name_resolve ci.typedefs @@ `Named (record_ty_name, []) with
       | Some type_def ->
-          let field_exprs_flattened = List.map (fun n -> let (ident, _) = n.d in (ident, n)) field_exprs in
+          let field_exprs_flattened = List.map (fun ({d = (ident, _); _} as n) -> (ident, n)) field_exprs in
           AstAnnotator.attach_def_from_top_level_type_with_fields e type_def field_exprs_flattened
       | None -> ()
     );
@@ -811,8 +811,7 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
             (List.map (fun n -> fst n.d) record_fields)
             (List.map (fun n -> n.d) field_exprs) with
           | Some expr_reordered ->
-            let tds = List.map2 (fun n e' ->
-              let field_name, expected_dtype = n.d in
+            let tds = List.map2 (fun {d = (field_name, expected_dtype); _} e' ->
               let td = construct_graphIR graph ci ctx e' in
               let err_string = DTypeCheck.fmt_record_field field_name expected_dtype td.ld.dtype in
               check_dtype err_string (Some expected_dtype) td.ld.dtype e'.span ci.file_name ci.weak_typecasts ci.typedefs ci.macro_defs;
@@ -835,14 +834,14 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
       (
         match TypedefMap.type_def_name_resolve ci.typedefs @@ `Named (record_ty_name, []) with
         | Some type_def ->
-            let field_exprs_flattened = List.map (fun n -> let (ident, _) = n.d in (ident, n)) field_exprs in
+            let field_exprs_flattened = List.map (fun ({d = (ident, _); _} as n) -> (ident, n)) field_exprs in
             AstAnnotator.attach_def_from_top_level_type_with_fields e type_def field_exprs_flattened
         | None -> ()
       );
 
       (* record update *)
       let td_base = construct_graphIR graph ci ctx field_base in
-      let tds = List.map (fun n -> let (field_ident, e') = n.d in (field_ident, e', construct_graphIR graph ci ctx e')) field_exprs in
+      let tds = List.map (fun {d = (field_ident, e'); _} -> (field_ident, e', construct_graphIR graph ci ctx e')) field_exprs in
       let updates =
         (* bruteforce *)
         List.map (fun (field_ident, _e', td) ->

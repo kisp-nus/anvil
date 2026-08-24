@@ -263,15 +263,14 @@ let variant_tag_size (v: [>`Variant of (data_type option)*((identifier * (data_t
 let variant_lookup_dtype (v: [> `Variant of (data_type option)*((identifier * (data_type option) * (literal option)) ast_node list)]) (cstr: identifier) : data_type option =
     match v with
     | `Variant (_, vlist) ->
-      List.find_opt (fun n -> let (x,_dt,_vl) = n.d in x = cstr) vlist |> Option.map (fun n -> let (_,dt,_) = n.d in dt) |> Option.join
+      List.find_opt (fun {d = (x,_,_); _} -> x = cstr) vlist |> Option.map (fun {d = (_, dt, _); _} -> dt) |> Option.join
 
 (** Index of a variant type constructor. *)
 let variant_lookup_index (v: [> `Variant of (data_type option)*((identifier * (data_type option) * (literal option)) ast_node list)]) (cstr: identifier) : int option =
   let res : int option ref = ref None in
   match v with
   | `Variant (_,vlist) ->
-      List.iteri (fun i n -> 
-        let (x,_,v) = n.d in
+      List.iteri (fun i {d = (x,_,v); _} ->
         if Option.is_none !res then begin
           if x = cstr then
             if Option.is_none v then
@@ -631,16 +630,14 @@ and string_of_data_type (dtype : data_type) : string =
     in
     "Array[" ^ n' ^ "] (" ^ string_of_data_type d ^ ")"
   | `Variant (_, (id_opt_list)) ->
-      "Variant (" ^ String.concat ", " (List.map (fun node ->
-        let (id, dt_opt, val_opt) = node.d in
+      "Variant (" ^ String.concat ", " (List.map (fun {d = (id, dt_opt, val_opt); _} ->
         match (dt_opt, val_opt) with
         | (Some dt, None) -> id ^ ": " ^ string_of_data_type dt
         | (None, Some lit) -> id ^ ": " ^ string_of_literal lit
         | (Some dt, Some lit) -> id ^ ": " ^ string_of_data_type dt ^ " = " ^ string_of_literal lit
         | (None, None) -> id) id_opt_list) ^ ")"
   | `Record fields ->
-      "Record (" ^ String.concat ", " (List.map (fun node ->
-        let field_name, field_type = node.d in
+      "Record (" ^ String.concat ", " (List.map (fun {d = (field_name, field_type); _} ->
         field_name ^ ": " ^ string_of_data_type field_type) fields) ^ ")"
   | `Tuple dt_list ->
     (
@@ -696,8 +693,7 @@ let rec substitute_expr_identifier (id: identifier) (value: expr_node) (idx : in
   | Record (name, fields, base) ->
       Record (
         name,
-        List.map (fun n ->
-          let (field_name, field_expr) = n.d in
+        List.map (fun ({d = (field_name, field_expr); _} as n) ->
           { n with d = (field_name, subst field_expr) }
         ) fields,
         Option.map subst base
