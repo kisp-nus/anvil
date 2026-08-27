@@ -67,6 +67,12 @@ and concretise_dtype_params int_env type_env (dtype : data_type) : data_type =
   | _ -> dtype
 
 let build_param_envs param_values params =
+  let expected = List.length params
+  and actual = List.length param_values in
+  if expected <> actual then
+    raise (Except.TypeError [
+      Text (Printf.sprintf "Expected %d parameters but got %d" expected actual)
+    ]);
   let int_env = create_env ()
   and type_env = create_env () in
   let vals_s = List.to_seq param_values
