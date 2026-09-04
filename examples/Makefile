@@ -48,7 +48,7 @@ sv_extern:
 	dune exec anvil -- -sv-extern $(MODULE_NAME).anvil > $(MODULE_NAME)_ultimate_wrapper.sv
 	python3 extern_generate_filelist.py $(MODULE_NAME)_ultimate_wrapper.sv $(SV_EXTERN_VERBOSE)
 	verilator -Wall --binary --exe --assert --trace --build -f $(MODULE_NAME)_ultimate_wrapper_filelist.f --timing --top-module $(MODULE_NAME)_ultimate_wrapper -o sim.out -Wno-UNDRIVEN -Wno-UNUSED -Wno-DECLFILENAME
-	./obj_dir/sim.out +verilator+quiet > $(MODULE_NAME).test 2>&1
+	./obj_dir/sim.out +verilator+quiet 2>&1 | grep -v 'Verilog $$finish' > $(MODULE_NAME).test
 
 sv_extern_clean:
 	rm -f $(MODULE_NAME)_ultimate_wrapper.sv
