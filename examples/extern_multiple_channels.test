@@ -78,4 +78,3 @@ Received DRAM read data: 16045690981097406545
 DRAM data changed to: 0xdeadbeef00000052
 Received AXI request:  268435520
 CPU issued config command:        170
-- /home/daoen/anvil_newest/anvil_verification_clean/examples/extern_multiple_channels_ultimate_wrapper.sv:60: Verilog $finish

@@ -20,4 +20,3 @@ Received DRAM timing word:   316
 Received DRAM timing word:   316
 DRAM timing word changed to:        317
 Received DRAM timing word:   316
-- /home/daoen/anvil_newest/anvil_verification_clean/examples/extern_static_static_ultimate_wrapper.sv:28: Verilog $finish
