@@ -48,33 +48,6 @@ type tb_entry = {
   static_interval : int option;
 }
 
-let codegen_ports printer (graphs : event_graph_collection)
-    (endpoints : endpoint_def list) (is_mod_comb : bool) =
-
-  let port_list =
-    CodegenPort.gather_ports graphs.channel_classes endpoints
-  in
-
-  let rec print_port_list = function
-    | [] -> ()
-    | [port] ->
-        CodegenPort.format graphs.typedefs graphs.macro_defs port
-        |> CodegenPrinter.print_line printer
-    | port :: rest ->
-        CodegenPort.format graphs.typedefs graphs.macro_defs port
-        |> Printf.sprintf "%s,"
-        |> CodegenPrinter.print_line printer;
-        print_port_list rest
-  in
-
-  if is_mod_comb then
-    print_port_list port_list
-  else
-    print_port_list ([CodegenPort.clk; CodegenPort.rst] @ port_list);
-
-  port_list
-
-
 let codegen_dut_and_ultimate_wrapper printer
     (graphs : event_graph_collection) =
 
@@ -777,21 +750,6 @@ let codegen_dut_and_ultimate_wrapper printer
       "endmodule"
       ~lvl_delta_pre:(-1)
   )
-
-
-let generate_extern_import out file_name =
-  In_channel.with_open_text
-    file_name
-    (fun in_channel ->
-      let eof = ref false in
-      while not !eof do
-        match In_channel.input_line in_channel with
-        | Some line ->
-            Out_channel.output_string out line;
-            Out_channel.output_char out '\n'
-        | None -> eof := true
-      done)
-
 
 let generate
     (out : out_channel)
