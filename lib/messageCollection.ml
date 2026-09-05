@@ -31,7 +31,7 @@ let lookup_message (mc : t) (msg_spec : message_specifier) (channel_classes : ch
     let* msg = List.find_opt (fun (m : message_def) -> m.name = msg_spec.msg) cc.messages in
     (* adjust the direction of the message to account for the direction of the endpoint *)
     let* msg = Some {msg with dir = get_message_direction msg.dir endpoint.dir} in
-    Some (ParamConcretise.concretise_message cc.params endpoint.channel_params msg)
+    Some (ParamConcretise.concretise_message endpoint.channel_class cc.params endpoint.channel_params msg)
   )
 
 let message_sync_mode_allowed = function
@@ -88,7 +88,7 @@ let create (channels : channel_def ast_node list)
       [(left_endpoint, span); (right_endpoint, span)]
     else 
       let n' = Option.get chan.n_instances in
-      let n = ParamConcretise.concretise_array_dimm proc_params param_values n' in
+      let n = ParamConcretise.concretise_array_dimm chan.channel_class proc_params param_values n' in
       let left_nm_list = create_endpoint_array_string n [chan.endpoint_left] in
       let right_nm_list = create_endpoint_array_string n [chan.endpoint_right] in
       assert (List.length left_nm_list = List.length right_nm_list);
@@ -113,7 +113,7 @@ let create (channels : channel_def ast_node list)
           (* these should have been checked earlier *)
           assert ((message_sync_mode_allowed msg.send_sync) && (message_sync_mode_allowed msg.recv_sync));
           let msg_dir = get_message_direction msg.dir endpoint.dir in
-          (endpoint, ParamConcretise.concretise_message cc.params endpoint.channel_params msg, msg_dir)
+          (endpoint, ParamConcretise.concretise_message endpoint.channel_class cc.params endpoint.channel_params msg, msg_dir)
         in List.map msg_map cc.messages
     | None ->
         raise (Except.TypeError [
@@ -130,7 +130,7 @@ let create (channels : channel_def ast_node list)
         [({ep with foreign = get_foreign ep.name}, span)]
     | Some num ->
         (* let num_instances = in *)
-        let num_instances = ParamConcretise.concretise_array_dimm proc_params param_values num in
+        let num_instances = ParamConcretise.concretise_array_dimm ep.name proc_params param_values num in
         let size_instances = get_size_instances num_instances in
         if size_instances <= 0 then
           raise (Except.TypeError [

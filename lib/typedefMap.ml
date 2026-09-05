@@ -11,7 +11,7 @@ let of_list typedef_list =
 let data_type_name_resolve (type_defs : t) (dtype : data_type) : data_type option =
   match dtype with
   | `Named (type_name, params) -> Utils.StringMap.find_opt type_name type_defs |> Option.map (fun (x : type_def) ->
-      ParamConcretise.concretise_dtype x.params params x.body)
+      ParamConcretise.concretise_dtype type_name x.params params x.body)
   | _ -> Some dtype
 
 let rec data_type_size (type_defs : t) (macro_defs : macro_def list) (dtype : data_type) : int =
@@ -34,7 +34,7 @@ let rec data_type_size (type_defs : t) (macro_defs : macro_def list) (dtype : da
       | Some type_def -> type_def
       | None -> failwith("Unknown Datatype: "^type_name)
       in
-      ParamConcretise.concretise_dtype type_def.params params type_def.body |> data_type_size type_defs macro_defs
+      ParamConcretise.concretise_dtype type_name type_def.params params type_def.body |> data_type_size type_defs macro_defs
   | `Variant (dt,vlist) as var ->
       let mx_data_size = List.fold_left (fun m (_,dt,_) -> max m (
         let inner_dtype_op = dt in

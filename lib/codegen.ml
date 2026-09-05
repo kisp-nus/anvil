@@ -71,7 +71,7 @@ let codegen_spawns printer (graphs : event_graph_collection) (g : proc_graph) =
       let endpoint_name_local = CodegenFormat.canonicalize_endpoint_name param_ident (List.hd g.threads |> fst) in
       let cc = MessageCollection.lookup_channel_class graphs.channel_classes endpoint_local.channel_class |> Option.get in
       let print_msg_con = fun (msg : message_def) ->
-        let msg = ParamConcretise.concretise_message cc.params endpoint_local.channel_params msg in
+        let msg = ParamConcretise.concretise_message endpoint_local.channel_class cc.params endpoint_local.channel_params msg in
         if CodegenPort.message_has_valid_port msg then
             gen_connect (Format.format_msg_valid_signal_name arg_endpoint.name msg.name)
               (Format.format_msg_valid_signal_name endpoint_name_local msg.name)
@@ -97,7 +97,7 @@ let codegen_spawns printer (graphs : event_graph_collection) (g : proc_graph) =
         end
       in 
       let print_msg_con_last = fun (msg : message_def) ->
-        let msg = ParamConcretise.concretise_message cc.params endpoint_local.channel_params msg in
+        let msg = ParamConcretise.concretise_message endpoint_local.channel_class cc.params endpoint_local.channel_params msg in
         if CodegenPort.message_has_valid_port msg then
             gen_connect_post (Format.format_msg_valid_signal_name arg_endpoint.name msg.name)
               (Format.format_msg_valid_signal_name endpoint_name_local msg.name)
