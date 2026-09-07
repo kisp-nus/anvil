@@ -66,7 +66,17 @@ and concretise_dtype_params int_env type_env (dtype : data_type) : data_type =
     `Tuple elems_dtypes'
   | _ -> dtype
 
-let build_param_envs param_values params =
+let build_param_envs context param_values params =
+  let expected = List.length params
+  and actual = List.length param_values in
+  if expected <> actual then
+    let parameter_word = if expected = 1 then "parameter" else "parameters" in
+    raise (Except.TypeError [
+      Text (Printf.sprintf
+        "Expected %d %s but got %d in %s"
+        expected parameter_word actual context)
+    ])
+  else ();
   let int_env = create_env ()
   and type_env = create_env () in
   let vals_s = List.to_seq param_values
@@ -83,11 +93,11 @@ let build_param_envs param_values params =
       );
   (int_env, type_env)
 
-let concretise_proc param_values proc =
+let concretise_proc context param_values proc =
   if proc.params = [] then
     proc
   else (
-    let (int_param_env, type_param_env) = build_param_envs param_values proc.params in
+    let (int_param_env, type_param_env) = build_param_envs context param_values proc.params in
     let args = List.map
       (fun ({d = a; span} : endpoint_def ast_node) ->
         let params = concretise_params int_param_env type_param_env a.channel_params in
@@ -116,12 +126,12 @@ let concretise_proc param_values proc =
     )
   )
 
-let concretise_dtype params param_values =
-  let (int_param_env, type_param_env) = build_param_envs param_values params in
+let concretise_dtype context params param_values =
+  let (int_param_env, type_param_env) = build_param_envs context param_values params in
   concretise_dtype_params int_param_env type_param_env
 
-let concretise_message params param_values (msg : Lang.message_def) =
-  let (int_param_env, type_param_env) = build_param_envs param_values params in
+let concretise_message context params param_values (msg : Lang.message_def) =
+  let (int_param_env, type_param_env) = build_param_envs context param_values params in
   let sig_types = List.map
     (fun (stype : Lang.sig_type_chan_local) ->
       {stype with dtype = concretise_dtype_params int_param_env type_param_env stype.dtype}
@@ -131,8 +141,8 @@ let concretise_message params param_values (msg : Lang.message_def) =
   {msg with sig_types}
 
 
-let concretise_array_dimm params param_values (dimm : Lang.array_dimensions) : array_dimm_concrete =
-  let (int_param_env, _) = build_param_envs param_values params in
+let concretise_array_dimm context params param_values (dimm : Lang.array_dimensions) : array_dimm_concrete =
+  let (int_param_env, _) = build_param_envs context param_values params in
   let mappings = ParamEnv.map_list (fun k v ->
     Printf.sprintf "%s : %d\n" k v
   ) int_param_env in

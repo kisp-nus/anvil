@@ -55,7 +55,7 @@ let build_proc (config : Config.compile_config) sched module_name param_values
     if param_values = [] then
       proc
     else
-      ParamConcretise.concretise_proc param_values proc
+      ParamConcretise.concretise_proc module_name param_values proc
   in
   let macro_defs_extended =
     if List.length param_values <> List.length proc.params then
