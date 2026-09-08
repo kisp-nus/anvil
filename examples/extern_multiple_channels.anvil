@@ -1,0 +1,127 @@
+extern import "extern_axi_cpu_master.sv"
+extern import "extern_dram_read_data_source.sv"
+extern import "extern_cpu_command_source.sv"
+extern import "extern_dram_init_table_source.sv"
+
+
+// TB1: Dynamic -> Dynamic
+chan axi_req_ch<T : type> {
+    left axi_req : (T@#2) @dyn - @dyn
+}
+
+// TB2: Static -> Dynamic
+chan dram_read_return_ch<T : type> {
+    left read_data_beat : (T@#2) @dyn - @#2
+}
+
+// TB3: Dynamic -> Static
+chan cpu_cfg_cmd_ch<T : type> {
+    left cfg_cmd : (T@#4) @#4 - @dyn
+}
+
+// TB4: Static -> Static
+chan dram_init_table_ch<T : type> {
+    left timing_word : (T@#3) @#3 - @#3
+}
+
+
+proc axi_cpu_master_ext(ep : right axi_req_ch<logic[32]>) extern("extern_axi_cpu_master") {
+    clk_i("clk_i");
+    rst_ni("rst_ni");
+    ep.axi_req("data_o":"valid_o":"ack_i");
+}
+
+
+proc dram_read_source_ext(ep : right dram_read_return_ch<logic[64]>) extern("extern_dram_read_data_source") {
+    clk_i("clk_i");
+    rst_ni("rst_ni");
+    ep.read_data_beat("data_o": :"ack_i");
+}
+
+proc cpu_cfg_source_ext(ep : right cpu_cfg_cmd_ch<logic[16]>) extern("extern_cpu_command_source") {
+    clk_i("clk_i");
+    rst_ni("rst_ni");
+    ep.cfg_cmd("data_o":"valid_o": );
+}
+
+proc dram_init_rom_ext(ep : right dram_init_table_ch<logic[16]>) extern("extern_dram_init_table_source") {
+    clk_i("clk_i");
+    rst_ni("rst_ni");
+    ep.timing_word("data_o": :);
+}
+
+proc memory_controller_dut(
+    axi_ep    : left axi_req_ch<logic[32]>,
+    read_ep   : left dram_read_return_ch<logic[64]>,
+    cfg_ep    : left cpu_cfg_cmd_ch<logic[16]>,
+    timing_ep : left dram_init_table_ch<logic[16]>
+) {
+    reg last_axi_req     : logic[32];
+    reg last_read_data   : logic[64];
+    reg last_cfg_cmd     : logic[16];
+    reg last_timing_word : logic[16];
+
+
+    // TB1: Dynamic -> Dynamic
+    loop {
+        let req = recv axi_ep.axi_req >>
+        dprint "Received AXI request: %d" (req) >>
+        set last_axi_req := req >>
+        cycle 2
+    }
+
+
+    // TB2: Static -> Dynamic
+    loop {
+        cycle 2 >>
+        let beat = recv read_ep.read_data_beat >>
+        dprint "Received DRAM read data: %d" (beat) >>
+        set last_read_data := beat
+    }
+
+
+    // TB3: Dynamic -> Static
+    // Static receive interval = 4
+    loop {
+        cycle 3 >>
+        let cmd = recv cfg_ep.cfg_cmd >>
+        dprint "Received CPU config command: %d" (cmd) >>
+        set last_cfg_cmd := cmd
+    }
+
+
+    // TB4: Static -> Static
+    // Static receive interval = 3
+    loop {
+        cycle 2 >>
+        let timing = recv timing_ep.timing_word >>
+        dprint "Received DRAM timing word: %d" (timing) >>
+        set last_timing_word := timing
+    }
+}
+
+proc extern_multiple_channels() {
+    chan axi_le -- axi_ri : axi_req_ch<logic[32]>;
+    chan read_le -- read_ri : dram_read_return_ch<logic[64]>;
+    chan cfg_le -- cfg_ri : cpu_cfg_cmd_ch<logic[16]>;
+    chan timing_le -- timing_ri : dram_init_table_ch<logic[16]>;
+
+
+    // Four different external SV modules
+    spawn axi_cpu_master_ext(axi_ri);
+    spawn dram_read_source_ext(read_ri);
+    spawn cpu_cfg_source_ext(cfg_ri);
+    spawn dram_init_rom_ext(timing_ri);
+
+    // One Anvil DUT connected to all four channels
+    spawn memory_controller_dut(
+        axi_le,
+        read_le,
+        cfg_le,
+        timing_le
+    );
+
+    loop {
+        cycle 1
+    }
+}

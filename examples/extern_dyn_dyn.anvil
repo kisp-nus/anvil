@@ -1,0 +1,32 @@
+extern import "extern_axi_cpu_master.sv"
+
+chan axi_cpu_req_ch<T : type> {
+    // External AXI CPU master issues memory requests whenever software needs service.
+    // The memory controller accepts them whenever command queue space is available.
+    left axi_req : (T@#2) @dyn - @dyn
+}
+
+proc axi_cpu_master_ext(ep : right axi_cpu_req_ch<logic[31]>) extern("extern_axi_cpu_master") {
+    clk_i("clk_i");
+    rst_ni("rst_ni");
+    ep.axi_req("data_o":"valid_o":"ack_i");
+}
+
+proc memory_controller_dut(ep: left axi_cpu_req_ch<logic[31]>) {
+    reg last_axi_req : logic[31];
+    loop {
+      let req = recv ep.axi_req >>
+      dprint "received AXI request %d" (req) >>
+      set last_axi_req := req >>
+      cycle 2
+    }
+}
+
+proc extern_dyn_dyn() {
+    chan ep_le -- ep_ri : axi_cpu_req_ch<logic[31]>;
+    spawn axi_cpu_master_ext(ep_ri);
+    spawn memory_controller_dut(ep_le);
+    loop {
+      cycle 1
+    }
+}

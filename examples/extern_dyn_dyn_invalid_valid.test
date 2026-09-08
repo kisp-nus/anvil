@@ -1,0 +1,4 @@
+received AXI request  268435520
+[65] %Error: tb1.sv:103: Assertion failed in TOP.extern_dyn_dyn_invalid_valid_ultimate_wrapper.test1: Assertion Failed: holds_valid_before_handshake
+%Error: /home/daoen/anvil_newest/anvil_verification_clean/extern_properties/tb1.sv:103: Verilog $stop
+Aborting...

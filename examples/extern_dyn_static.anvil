@@ -1,0 +1,37 @@
+extern import "extern_cpu_command_source.sv"
+
+chan cpu_cfg_cmd_ch<T : type> {
+  // Right side sends dynamically.
+  // Left side receives on a fixed static interval.
+  left cfg_cmd : (T@#4) @#4 - @dyn
+}
+
+proc cpu_firmware_driver(ep : right cpu_cfg_cmd_ch<logic[16]>) extern("extern_cpu_command_source") {
+    clk_i("clk_i");
+    rst_ni("rst_ni");
+    ep.cfg_cmd("data_o":"valid_o":);
+}
+
+proc memctrl_scheduler_dut(
+    ep : left cpu_cfg_cmd_ch<logic[16]>) {
+
+    reg last_cfg_cmd : logic[16];
+
+    loop {
+        let cmd = recv ep.cfg_cmd >>
+        dprint "Received CPU config command: %d" (cmd) >>
+        set last_cfg_cmd := cmd >>
+        cycle 1
+    }
+}
+
+proc extern_dyn_static() {
+    chan ep_le -- ep_ri : cpu_cfg_cmd_ch<logic[16]>;
+
+    spawn cpu_firmware_driver(ep_ri);
+    spawn memctrl_scheduler_dut(ep_le);
+
+    loop {
+        cycle 1
+    }
+}

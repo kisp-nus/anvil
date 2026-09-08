@@ -1,0 +1,80 @@
+Received AXI request:  268435520
+Received DRAM timing word:   311
+Received DRAM read data: 16045690981097406530
+DRAM data changed to: 0xdeadbeef00000043
+Received AXI request:  268435520
+Received DRAM timing word:   311
+Received DRAM read data: 16045690981097406531
+DRAM timing word changed to:        312
+DRAM data changed to: 0xdeadbeef00000044
+Received AXI request:  268435520
+Received DRAM timing word:   312
+Received DRAM read data: 16045690981097406532
+CPU issued config command:        166
+DRAM data changed to: 0xdeadbeef00000045
+Received CPU config command:   166
+Received AXI request:  268435520
+Received DRAM timing word:   312
+Received DRAM read data: 16045690981097406533
+DRAM data changed to: 0xdeadbeef00000046
+Received AXI request:  268435520
+Received DRAM timing word:   312
+Received DRAM read data: 16045690981097406534
+DRAM timing word changed to:        313
+DRAM data changed to: 0xdeadbeef00000047
+Received AXI request:  268435520
+Received DRAM timing word:   313
+Received DRAM read data: 16045690981097406535
+DRAM data changed to: 0xdeadbeef00000048
+Received AXI request:  268435520
+CPU issued config command:        167
+Received DRAM timing word:   313
+Received CPU config command:   167
+Received DRAM read data: 16045690981097406536
+DRAM data changed to: 0xdeadbeef00000049
+Received AXI request:  268435520
+DRAM timing word changed to:        314
+Received DRAM timing word:   313
+Received DRAM read data: 16045690981097406537
+DRAM data changed to: 0xdeadbeef0000004a
+Received AXI request:  268435520
+Received DRAM timing word:   314
+Received DRAM read data: 16045690981097406538
+DRAM data changed to: 0xdeadbeef0000004b
+Received AXI request:  268435520
+Received DRAM timing word:   314
+CPU issued config command:        168
+Received DRAM read data: 16045690981097406539
+Received CPU config command:   168
+DRAM timing word changed to:        315
+DRAM data changed to: 0xdeadbeef0000004c
+Received AXI request:  268435520
+Received DRAM timing word:   315
+Received DRAM read data: 16045690981097406540
+DRAM data changed to: 0xdeadbeef0000004d
+Received AXI request:  268435520
+Received DRAM timing word:   315
+Received DRAM read data: 16045690981097406541
+DRAM data changed to: 0xdeadbeef0000004e
+Received AXI request:  268435520
+Received DRAM timing word:   315
+Received DRAM read data: 16045690981097406542
+DRAM timing word changed to:        316
+CPU issued config command:        169
+DRAM data changed to: 0xdeadbeef0000004f
+Received CPU config command:   169
+Received AXI request:  268435520
+Received DRAM timing word:   316
+Received DRAM read data: 16045690981097406543
+DRAM data changed to: 0xdeadbeef00000050
+Received AXI request:  268435520
+Received DRAM timing word:   316
+Received DRAM read data: 16045690981097406544
+DRAM data changed to: 0xdeadbeef00000051
+Received AXI request:  268435520
+DRAM timing word changed to:        317
+Received DRAM timing word:   316
+Received DRAM read data: 16045690981097406545
+DRAM data changed to: 0xdeadbeef00000052
+Received AXI request:  268435520
+CPU issued config command:        170

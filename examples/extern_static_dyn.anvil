@@ -1,0 +1,37 @@
+extern import "extern_dram_read_data_source.sv"
+
+chan dram_read_return_ch<T : type> {
+  // Right side sends statically every 2 cycles.
+  // Left side receives dynamically.
+  left read_data_beat : (T@#2) @dyn - @#2
+}
+
+proc dram_device_model(ep : right dram_read_return_ch<logic[63]>) extern("extern_dram_read_data_source") {
+    clk_i("clk_i");
+    rst_ni("rst_ni");
+    ep.read_data_beat("data_o": :"ack_i");
+}
+
+proc memory_controller_return_path_dut(
+    ep : left dram_read_return_ch<logic[63]>) {
+
+    reg last_read_data : logic[63];
+
+    loop {
+        cycle 2 >>
+        let beat = recv ep.read_data_beat >>
+        dprint "Received DRAM read data: %d" (beat) >>
+        set last_read_data := beat
+    }
+}
+
+proc extern_static_dyn() {
+    chan ep_le -- ep_ri : dram_read_return_ch<logic[63]>;
+
+    spawn dram_device_model(ep_ri);
+    spawn memory_controller_return_path_dut(ep_le);
+
+    loop {
+        cycle 1
+    }
+}
