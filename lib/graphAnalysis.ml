@@ -627,6 +627,9 @@ let rec recurse_unfold expr_full_node expr_node =
       )
     | Debug (DebugPrint (format, es)) ->
       Debug (DebugPrint (format, List.map unfold es))
+    | ModelChecker (Assertion (format, e)) ->
+      ModelChecker (Assertion (format, unfold e))
+
     | Send sp ->
       Send {sp with send_data = unfold sp.send_data}
     | SharedAssign (ident, e') ->

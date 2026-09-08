@@ -86,6 +86,7 @@
 %token KEYWORD_SHARED       (* shared *)
 %token KEYWORD_ASSIGNED     (* assigned *)
 %token KEYWORD_BY           (* by *)
+%token KEYWORD_ASSERT       (* assert *)
 %nonassoc PREC_NAMED_TYPE
 %right LEFT_ABRACK RIGHT_ABRACK LEFT_ABRACK_EQ RIGHT_ABRACK_EQ
 %right DOUBLE_GT SEMICOLON
@@ -584,6 +585,8 @@ expr:
   { Lang.Debug (Lang.DebugPrint (s, v)) }
 | KEYWORD_DFINISH
   { Lang.Debug Lang.DebugFinish }
+| KEYWORD_ASSERT; s = STR_LITERAL; LEFT_PAREN; e = node(expr); RIGHT_PAREN
+  { Lang.ModelChecker (Lang.Assertion (s, e)) }
 | LEFT_BRACKET; li = separated_list(COMMA, node(expr)); RIGHT_BRACKET
   { Lang.List li }
 ;

@@ -431,6 +431,7 @@ module CombSimplPass = struct
           | DebugFinish -> DebugFinish
           | ImmediateRecv msg -> ImmediateRecv msg
           | ImmediateSend (msg, td) -> ImmediateSend (msg, replace_lowering_data td)
+          | Assertion (x, y) -> Assertion (x, replace_lowering_data y)
           in
           {action with d}
         ) ev.actions in

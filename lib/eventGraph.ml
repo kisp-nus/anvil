@@ -91,6 +91,7 @@ and action =
   | PutShared of string * shared_var_info * lowering_data
   | ImmediateSend of Lang.message_specifier * lowering_data
   | ImmediateRecv of Lang.message_specifier
+  | Assertion of string * lowering_data
 
 (** Type of an action that may take multiple cycles. Those
 are basically those that synchronise through message passing. *)

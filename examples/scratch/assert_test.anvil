@@ -1,0 +1,10 @@
+proc counter2 () {
+    reg counter : logic[4];
+    loop {
+        set counter := *counter + 4'b1 >>
+        assert "Counter_in_range" (*counter <= 4'd8);
+        if *counter == 4'd8 {
+            dfinish
+        }
+    }
+}

@@ -97,6 +97,8 @@ rule read =
   | "enum"    { KEYWORD_ENUM }
   | "with"    { KEYWORD_WITH }
   | "try"     { KEYWORD_TRY }
+  (* add model checker features *)
+  | "assert"  { KEYWORD_ASSERT }
   | int       { let n = Lexing.lexeme lexbuf |> int_of_string in INT n }
   | ident     { IDENT (Lexing.lexeme lexbuf) }
   | bit_literal { BIT_LITERAL (Lexing.lexeme lexbuf) }

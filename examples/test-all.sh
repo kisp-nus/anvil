@@ -20,8 +20,11 @@ for test_file in $TEST_FILES; do
     if make MODULE_NAME=$t; then
         if [ "z$BUILD_ONLY" = "z" ]; then
             echo "Build success. Now to run test ..."
+            # strip Verilator report banner lines ("- ...") instead of counting
+            # trailing lines: portable to BSD head (macOS) and robust to the
+            # banner length changing across Verilator versions
             make MODULE_NAME=$t run TIMEOUT=$TIMEOUT \
-                | head -n -3 \
+                | (grep -v '^- ' || true) \
                 | (grep -v 'Verilog $finish' || true) > $temp_result
             if diff $temp_result $test_file > $t.error; then
                 # results are identical
@@ -48,4 +51,5 @@ if [ -n "$failed_cases" ]; then
     for t in $failed_cases; do
         echo " $t"
     done
+    exit 1
 fi

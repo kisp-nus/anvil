@@ -8,7 +8,7 @@ module EventStateFormatter = struct
   let format_syncstate = format_reg_state "syncstate"
 
   let format_current thread_id ev_id =
-    Printf.sprintf "EVENTS%d[%d].event_current" thread_id ev_id
+    Printf.sprintf "_thread_%d_events[%d]" thread_id ev_id
 end
 
 let collect_reg_states g =
@@ -44,11 +44,8 @@ let collect_reg_states g =
 let codegen_decl printer (g : EventGraph.event_graph) =
   let st_count = List.length g.events in
   (* `current` is a wire indicates if an event is reached in the current cycle *)
-  [
-    Printf.sprintf "for (genvar i = 0; i < %d; i ++) begin : EVENTS%d" st_count g.thread_id;
-    "logic event_current;";
-    "end"
-  ] |> CodegenPrinter.print_lines printer;
+  Printf.sprintf "logic [%d:0] _thread_%d_events;" (st_count - 1) g.thread_id
+  |> CodegenPrinter.print_line printer;
 
   Printf.sprintf "logic _init_%d;" g.thread_id |> CodegenPrinter.print_line printer;
 
@@ -271,6 +268,11 @@ let codegen_actions printer (g : EventGraph.event_graph) =
         | PutShared _ -> ()
         | ImmediateRecv _ -> ()
         | ImmediateSend _ -> ()
+        | Assertion (s, td) ->
+          let w = Option.get td.w in 
+          Printf.sprintf "%s: assert (%s);"
+            (CodegenFormat.sanitize_identifier s)
+            (CodegenFormat.format_wirename w.thread_id w.id) |> print_line
       in
       List.iter print_action e.actions;
       print_line ~lvl_delta_pre:(-1) "end"

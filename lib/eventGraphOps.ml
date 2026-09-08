@@ -95,3 +95,4 @@ let string_of_actions action =
   | PutShared _ -> "PutShared"
   | ImmediateRecv _ -> "ImmediateRecv"
   | ImmediateSend _ -> "ImmediateSend"
+  | Assertion _ -> "Assertion"

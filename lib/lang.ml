@@ -426,6 +426,7 @@ and expr =
   | Match of expr_node * ((expr_node * expr_node option) list)
   | Read of lvalue (** reading a value from a register (leading to a borrow) *)
   | Debug of debug_op
+  | ModelChecker of model_checker
   | Send of send_pack
   | Recv of recv_pack
   | SharedAssign of identifier * expr_node (** make ready a shared value *)
@@ -446,7 +447,11 @@ and index =
 
 and debug_op =
   | DebugPrint of string * expr_node list
-  | DebugFinish
+  | DebugFinish 
+
+(** Model Checker*)
+and model_checker = 
+  | Assertion of string * expr_node
 
 let delay_immediate = `Cycles 0
 let delay_single_cycle = `Cycles 1
@@ -711,6 +716,7 @@ let rec substitute_expr_identifier (id: identifier) (value: expr_node) (idx : in
   | Debug (DebugPrint (msg, exprs)) ->
       Debug (DebugPrint (msg, List.map subst exprs))
   | Debug other_debug -> Debug other_debug
+  | ModelChecker (Assertion (s, expr)) -> ModelChecker (Assertion (s, subst expr))
   | IfExpr (cond, then_expr, else_expr) ->
       IfExpr (
         subst cond,

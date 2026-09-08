@@ -37,6 +37,7 @@ let check_linear (config : Config.compile_config) lookup_message (g : event_grap
           add_msg msg ev ({d = {ty = Recv msg; until = ev}; span = ac_span.span})
         | ImmediateSend (msg, td) ->
           add_msg msg ev ({d = {ty = Send (msg, td); until = ev}; span = ac_span.span})
+        | Assertion _ -> ()
           (* add_reg_ops_td ev td *)
       ) ev.actions;
       List.iter (fun sa_span ->
@@ -290,6 +291,8 @@ let lifetime_check (config : Config.compile_config) (ci : cunit_info) (g : event
         let e_dpat = delay_pat_globalise msg.endpoint stype.lifetime.e |> delay_pat_reduce_cycles 1 in
         td_to_live_until := (td, (ev, e_dpat))::!td_to_live_until
       | ImmediateRecv _ -> ()
+      | Assertion (_, td) -> 
+        td_to_live_until :=  (td, (ev, `Cycles 0)) :: !td_to_live_until
     )
     (fun _ev sa ->
       match sa.d.ty with
@@ -386,6 +389,14 @@ let lifetime_check (config : Config.compile_config) (ci : cunit_info) (g : event
       | ImmediateSend (msg, td) ->
         check_send msg td ev ev a.span
       | ImmediateRecv _ -> ()
+      | Assertion (_, td) ->
+         if lifetime_in_range g.events lookup_message (EventGraphOps.lifetime_immediate ev) td.lt |> not then 
+            raise (LifetimeCheckError
+          [
+            Text "Value does not live long enough to be asserted";
+            Except.codespan_local a.span
+          ])
+          else ()
     )
     (fun ev sa ->
       match sa.d.ty with

@@ -634,6 +634,24 @@ and construct_graphIR (graph : event_graph) (ci : cunit_info)
         ctx.current.actions <- (let open EventGraph in tag_with_span e.span DebugFinish)::ctx.current.actions;
         {ld = {w = None; lt = EventGraphOps.lifetime_const ctx.current; reg_borrows = []; dtype = unit_dtype}}
     )
+  | ModelChecker (Assertion (s, e)) -> 
+    let timed_e = (construct_graphIR graph ci ctx) e in 
+    let all_w = 
+        match timed_e.ld.w with
+        | Some _ -> true 
+        | None -> false 
+    in 
+    let sz = TypedefMap.data_type_size ci.typedefs ci.macro_defs timed_e.ld.dtype in 
+    if sz <> 1 then 
+      raise (Except.TypeError [
+        Text (Printf.sprintf "Assertion condition must be 1 bit wide,
+        got %d bits" sz);
+        Except.codespan_local e.span
+      ])
+    else if not all_w then 
+      raise (Except.TypeError [Text "Invalide value in Assertion"; Except.codespan_local e.span]);
+    ctx.current.actions <- (let open EventGraph in Assertion (s, timed_e.ld) |> tag_with_span e.span)::ctx.current.actions;
+    {ld = {w = None; lt = EventGraphOps.lifetime_const ctx.current; reg_borrows = []; dtype = unit_dtype}}
   | Send send_pack ->
     (* just check that the endpoint and the message type is defined *)
     let ep  = send_pack.send_msg_spec.endpoint in
