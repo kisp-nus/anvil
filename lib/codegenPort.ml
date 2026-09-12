@@ -13,7 +13,7 @@ let message_has_data_port (msg : message_def) (idx : int) : bool = (List.nth msg
 let gather_ports_from_endpoint (channel_classes : channel_class_def list) (endpoint : endpoint_def) : t list =
   let cc = Option.get (MessageCollection.lookup_channel_class channel_classes endpoint.channel_class) in
   let gen_endpoint_ports = fun (msg : message_def) ->
-    let msg = ParamConcretise.concretise_message cc.params endpoint.channel_params msg in
+    let msg = ParamConcretise.concretise_message endpoint.channel_class cc.params endpoint.channel_params msg in
     let folder_inner = fun fmt msg_dir (n, port_list) (stype : sig_type_chan_local) ->
       if stype.dtype = Lang.unit_dtype then (n, port_list)
       else
