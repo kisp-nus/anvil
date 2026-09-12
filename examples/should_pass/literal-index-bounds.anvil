@@ -1,0 +1,9 @@
+// Constant indices whose digits reverse out of range (5'd17 -> 71) must still
+// pass the array bounds check.
+proc top() {
+    reg regs : logic[32][64];
+    loop {
+        set regs[5'd17] := *regs[5'd23] >>
+        set regs[5'd25] := *regs[5'h1f]
+    }
+}

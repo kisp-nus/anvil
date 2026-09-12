@@ -1,0 +1,17 @@
+// Constant array indices go through literal_eval, which must decode a sized
+// literal's digits in the right order: regs[5'd17] is element 17, not 71.
+proc literal_index () {
+    reg regs : logic[32][64];
+    loop {
+        set regs[5'd17] := 64'd17 >>
+        set regs[5'd23] := 64'd23 >>
+        set regs[5'd12] := 64'd12 >>
+        set regs[5'b1010] := 64'd10 >>
+        set regs[5'h1f] := 64'd31 >>
+        cycle 1 >>
+        dprint "d17=%d d23=%d d12=%d b1010=%d h1f=%d"
+            (*regs[5'd17], *regs[5'd23], *regs[5'd12], *regs[5'b1010], *regs[5'h1f]);
+        cycle 1 >>
+        dfinish
+    }
+}

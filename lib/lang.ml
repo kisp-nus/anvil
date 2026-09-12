@@ -151,14 +151,16 @@ let literal_bit_len (lit : literal) : int option =
   | Binary (n, _) | Decimal (n, _) | Hexadecimal (n, _) | WithLength (n, _) -> Some n
   | NoLength v -> Some (Utils.int_log2 (v + 1))
 
+(* Digit lists are stored least-significant-digit first by ParserHelper, so
+   fold from the right to consume the most-significant digit first. *)
 let literal_eval (lit : literal) : int =
   match lit with
   | Binary (_, b) ->
-      List.fold_left (fun n x -> n * 2 + (value_of_digit x)) 0 b
+      List.fold_right (fun x n -> n * 2 + (value_of_digit x)) b 0
   | Decimal (_, d) ->
-      List.fold_left (fun n x -> n * 10 + (value_of_digit x)) 0 d
+      List.fold_right (fun x n -> n * 10 + (value_of_digit x)) d 0
   | Hexadecimal (_, h) ->
-      List.fold_left (fun n x -> n * 16 + (value_of_digit x)) 0 h
+      List.fold_right (fun x n -> n * 16 + (value_of_digit x)) h 0
   | WithLength (_, v) -> v
   | NoLength v -> v
 
